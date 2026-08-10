@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Build output
+server/dist/
+client/dist/
+
+# TTS model — ~330 MB, downloaded via `npm run download-tts-model -w server`
+server/.tts-models/
+
+# Environment
+.env
+.env.local
+.env.production
+.env.staging
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Testing
+coverage/
+
+# Misc
+.cache/
+.temp/

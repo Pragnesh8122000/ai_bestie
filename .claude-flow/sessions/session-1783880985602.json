@@ -1,0 +1,23 @@
+{
+  "id": "session-1783880985602",
+  "startedAt": "2026-07-12T18:29:45.602Z",
+  "cwd": "/Users/pragnesh/Development/Projects/ai-bestie",
+  "context": {
+    "lastMatchedPatterns": [
+      "mem-implementation-progress-remaining-milestones-2",
+      "mem-implementation-progress-completed-milestones-1",
+      "mem-phase1-spec-locked-----0",
+      "mem-MEMORY-ai-bestie---memory-index-0",
+      "mem-implementation-progress-----0"
+    ]
+  },
+  "metrics": {
+    "edits": 61,
+    "commands": 0,
+    "tasks": 0,
+    "errors": 0
+  },
+  "updatedAt": "2026-07-12T18:48:28.066Z",
+  "endedAt": "2026-07-12T19:03:58.321Z",
+  "duration": 2052720
+}

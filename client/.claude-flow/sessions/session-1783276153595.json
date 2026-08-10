@@ -1,0 +1,14 @@
+{
+  "id": "session-1783276153595",
+  "startedAt": "2026-07-05T18:29:13.595Z",
+  "cwd": "/Users/pragnesh/Development/Projects/ai-bestie/client",
+  "context": {},
+  "metrics": {
+    "edits": 53,
+    "commands": 0,
+    "tasks": 0,
+    "errors": 0
+  },
+  "endedAt": "2026-07-12T19:53:55.058Z",
+  "duration": 609881463
+}

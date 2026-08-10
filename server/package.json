@@ -1,0 +1,41 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/with-tts-env.cjs tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node scripts/with-tts-env.cjs node dist/server.js",
+    "lint": "eslint src/",
+    "test": "vitest run",
+    "seed": "tsx src/seed.ts",
+    "download-tts-model": "tsx src/scripts/download-tts-model.ts"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "express-rate-limit": "^7.5.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.15.1",
+    "passport": "^0.7.0",
+    "passport-local": "^1.0.0",
+    "sherpa-onnx-node": "^1.11.7",
+    "zod": "^3.25.42"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cookie-parser": "^1.4.9",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.2",
+    "@types/jsonwebtoken": "^9.0.9",
+    "@types/passport": "^1.0.17",
+    "@types/passport-local": "^1.0.38",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.3"
+  }
+}

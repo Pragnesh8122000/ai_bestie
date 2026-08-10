@@ -1,0 +1,23 @@
+{
+  "id": "session-1783883103419",
+  "startedAt": "2026-07-12T19:05:03.419Z",
+  "cwd": "/Users/pragnesh/Development/Projects/ai-bestie",
+  "context": {
+    "lastMatchedPatterns": [
+      "insight-1783883038319-c2xz",
+      "insight-1783883038319-mikz",
+      "mem-MEMORY-ai-bestie---memory-index-0",
+      "mem-implementation-progress-----0",
+      "insight-1783883038319-n5u4"
+    ]
+  },
+  "metrics": {
+    "edits": 42,
+    "commands": 0,
+    "tasks": 0,
+    "errors": 0
+  },
+  "updatedAt": "2026-07-12T20:18:28.621Z",
+  "endedAt": "2026-07-12T20:23:31.569Z",
+  "duration": 4708151
+}
