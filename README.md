@@ -289,6 +289,29 @@ If the model is absent or `TTS_ENABLED=false`, the `/api/tts` endpoint returns
 503 and the client **automatically falls back** to the browser's built-in
 `speechSynthesis` voice, so voice replies keep working (just lower quality).
 
+### One voice, always
+
+Sam speaks with exactly **one female voice** per session — the two engines are
+never mixed mid-reply:
+
+- **Server:** `TTS_SID` is validated against the female Kokoro speaker ids
+  (0-4, 7, 8). A male or invalid id falls back to `2` (af_nicole) instead of
+  silently changing the character's voice.
+- **Client:** the engine (neural vs browser) is chosen by the first chunk that
+  actually produces audio and then **locked** for the session. A transient
+  `/api/tts` failure mid-reply skips that sentence rather than speaking it in a
+  different voice. The browser fallback picks a known female voice and never a
+  male one.
+
+Verify it end-to-end against a running server (drives the real client module):
+
+```bash
+TTS_TOKEN=<auth-jwt> npm run verify-voice -w server
+# → PASS: exactly one voice (remote) for the whole reply
+```
+
+Unit coverage for the same guarantee lives in `client/src/utils/speech.test.ts`.
+
 The native addon needs its shared libraries on the linker path; the `dev` and
 `start` scripts handle this automatically via `server/scripts/with-tts-env.cjs`.
 On a custom start command (e.g. Render), set `LD_LIBRARY_PATH` — see

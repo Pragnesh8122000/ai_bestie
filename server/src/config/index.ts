@@ -94,7 +94,10 @@ export const config = {
       process.env.TTS_MODEL_PATH ||
       path.resolve(rootDir, 'server/.tts-models/kokoro-en-v0_19'),
     // Kokoro English v0_19 speaker id (0=af, 1=af_bella, 2=af_nicole, ...).
-    sid: Number(process.env.TTS_SID ?? 2),
+    // A blank value means "unset" — `Number('')` is 0, which would silently
+    // pick a different voice than the intended default. ttsService validates
+    // this further and only allows female speaker ids.
+    sid: process.env.TTS_SID?.trim() ? Number(process.env.TTS_SID) : 2,
     maxChars: Number(process.env.TTS_MAX_CHARS ?? 1000),
   },
 } as const;

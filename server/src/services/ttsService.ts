@@ -13,9 +13,16 @@ import { AppError } from '../utils/errors';
  * singleton. Synthesis uses `generateAsync` (not the synchronous `generate`),
  * which runs inference on the addon's internal worker thread so the event
  * loop stays free — an in-flight chat SSE stream's heartbeat keeps firing
- * while a sentence is being synthesized. An AbortSignal cancels mid-synthesis
- * (the onProgress callback returns 0), so a client disconnect stops burning
- * CPU instead of finishing a reply nobody will hear.
+ * while a sentence is being synthesized.
+ *
+ * NOTE: we deliberately do NOT pass `onProgress` to `generateAsync`. In
+ * sherpa-onnx-node 1.13.x the streaming-progress path hard-crashes the whole
+ * process ("v8::ArrayBuffer::New Allocation failed - process out of memory")
+ * when the addon marshals a chunk back to JS. That killed every voice reply
+ * and made the client silently fall back to a *different* browser voice
+ * mid-sentence, which is why replies were spoken by several voices. The
+ * AbortSignal is still honoured before and after synthesis; we lose only
+ * mid-inference cancellation (a sentence is ~1-3s of CPU).
  *
  * If the model is missing or fails to load, `synthesize` throws AppError(503)
  * and the client falls back to browser speechSynthesis for that chunk.
@@ -25,6 +32,27 @@ let tts: OfflineTts | null = null;
 let loadAttempted = false;
 let loadError: string | null = null;
 let loadingPromise: Promise<void> | null = null;
+
+/**
+ * Kokoro English v0_19 speaker ids:
+ *   0 af, 1 af_bella, 2 af_nicole, 3 af_sarah, 4 af_sky   (American female)
+ *   5 am_adam, 6 am_michael                               (American male)
+ *   7 bf_emma, 8 bf_isabella                              (British female)
+ *   9 bm_george, 10 bm_lewis                              (British male)
+ *
+ * The companion is female, so only female ids are allowed. A bad TTS_SID must
+ * never silently switch the character's voice (or its gender).
+ */
+const FEMALE_SIDS = [0, 1, 2, 3, 4, 7, 8];
+const DEFAULT_FEMALE_SID = 2; // af_nicole
+
+/** The one voice the app speaks with. Resolved once, never per-request. */
+export function resolveSid(): number {
+  const sid = config.tts.sid;
+  return Number.isInteger(sid) && FEMALE_SIDS.includes(sid) ? sid : DEFAULT_FEMALE_SID;
+}
+
+const VOICE_SID = resolveSid();
 
 function modelFilesPresent(): boolean {
   const dir = config.tts.modelDir;
@@ -79,6 +107,7 @@ export interface TtsStatus {
   available: boolean;
   error: string | null;
   sampleRate: number | null;
+  sid: number;
 }
 
 export function ttsStatus(): TtsStatus {
@@ -86,6 +115,7 @@ export function ttsStatus(): TtsStatus {
     available: tts !== null,
     error: loadError,
     sampleRate: tts ? tts.sampleRate : null,
+    sid: VOICE_SID,
   };
 }
 
@@ -114,15 +144,17 @@ export async function synthesize(text: string, signal: AbortSignal): Promise<Buf
 
   const trimmed = text.trim();
   if (!trimmed) throw new AppError('Nothing to synthesize', 400);
+  if (signal.aborted) throw new AppError('TTS cancelled', 499);
 
   const audio = await enqueue(() =>
+    // No onProgress: see the module header — the addon's progress path crashes
+    // the process. Every chunk uses the same pinned female speaker id.
     tts!.generateAsync({
       text: trimmed,
       generationConfig: new GenerationConfig({
-        sid: config.tts.sid,
+        sid: VOICE_SID,
         speed: 1.0,
       }),
-      onProgress: () => (signal.aborted ? 0 : 1),
     }),
   );
 

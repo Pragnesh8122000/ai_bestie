@@ -20,5 +20,17 @@
     }
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "__tests__"]
+  // verify-voice.mts is a dev-only integration check: it imports the *client*
+  // speech module, which needs the DOM lib the server build deliberately
+  // doesn't load. It runs via tsx (`npm run verify-voice -w server`) and is
+  // never part of the server bundle.
+  // Tests run through vitest (esbuild), not tsc, so they're excluded from the
+  // emitted bundle too.
+  "exclude": [
+    "node_modules",
+    "dist",
+    "__tests__",
+    "src/**/*.test.ts",
+    "src/scripts/verify-voice.mts"
+  ]
 }

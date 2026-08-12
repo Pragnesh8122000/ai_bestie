@@ -66,6 +66,15 @@ type QueueItem =
 let stateListener: TtsStateListener | null = null;
 let preferredVoice: SpeechSynthesisVoice | null = null;
 
+/**
+ * Which engine speaks. Decided once per page-load by the first chunk that
+ * actually produces audio, then never changed. Mixing engines (or letting a
+ * single failed fetch drop one sentence onto the browser voice) is what made
+ * a reply sound like several different people.
+ */
+type TtsMode = 'unknown' | 'remote' | 'local';
+let ttsMode: TtsMode = 'unknown';
+
 // A speech session is one reply. Bumping `speechSession` invalidates every
 // in-flight fetch from the previous session so audio from an aborted/new
 // stream can't leak in after stopSpeaking() / beginSpeech().
@@ -74,6 +83,7 @@ let textQueue: string[] = [];
 let pumping = false;
 let speaking = false; // an item is currently playing (drives notifyState(true))
 let currentAudio: HTMLAudioElement | null = null;
+let currentAudioUrl: string | null = null;
 
 /** Register a listener that fires when audio actually starts/stops. */
 export function setTtsStateListener(fn: TtsStateListener | null): void {
@@ -84,16 +94,61 @@ function notifyState(speaking: boolean): void {
   stateListener?.(speaking);
 }
 
+// Browser voices, ranked. The companion is female, so male voices are excluded
+// outright rather than being allowed in as an "any English voice" fallback —
+// picking `en[0]` used to hand Sam a male voice on some machines, and a
+// different one on every OS.
+const FEMALE_VOICE_NAMES = [
+  'samantha', // macOS / iOS default female
+  'ava',
+  'allison',
+  'susan',
+  'zoe',
+  'karen',
+  'moira',
+  'tessa',
+  'fiona',
+  'serena',
+  'aria', // Windows / Edge neural
+  'jenny',
+  'michelle',
+  'zira',
+  'google us english', // Chrome (female)
+  'google uk english female',
+];
+const MALE_VOICE_NAMES =
+  /daniel|alex|fred|tom|david|mark|guy|george|lewis|ryan|oliver|arthur|male|man\b|junior|aaron|bruce|albert|rishi|eddy|reed|rocko|grandpa/i;
+
+function scoreVoice(v: SpeechSynthesisVoice): number {
+  const name = v.name.toLowerCase();
+  const idx = FEMALE_VOICE_NAMES.findIndex((n) => name.includes(n));
+  if (idx === -1) return -1;
+  // Earlier in the list = better; prefer local (offline, stable) voices.
+  return (FEMALE_VOICE_NAMES.length - idx) * 10 + (v.localService ? 1 : 0);
+}
+
 function loadVoice(): void {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
   const voices = window.speechSynthesis.getVoices();
   if (!voices || voices.length === 0) return;
   const en = voices.filter((v) => v.lang && v.lang.toLowerCase().startsWith('en'));
+  const pool = en.length ? en : voices;
+
+  let best: SpeechSynthesisVoice | null = null;
+  let bestScore = 0;
+  for (const v of pool) {
+    const s = scoreVoice(v);
+    if (s > bestScore) {
+      best = v;
+      bestScore = s;
+    }
+  }
+
+  // No recognised female voice: take the first English voice that isn't a
+  // known male one, and only then fall back to whatever exists. Deterministic
+  // either way — the same voice for every sentence of every reply.
   preferredVoice =
-    en.find((v) => /natural|google|samantha|aria|jenny|daniel/i.test(v.name)) ||
-    en[0] ||
-    voices[0] ||
-    null;
+    best || pool.find((v) => !MALE_VOICE_NAMES.test(v.name)) || pool[0] || null;
 }
 
 if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -132,6 +187,14 @@ function cancelCurrent(): void {
       currentAudio.pause();
     } catch {
       /* ignore */
+    }
+    if (currentAudioUrl) {
+      try {
+        URL.revokeObjectURL(currentAudioUrl);
+      } catch {
+        /* ignore */
+      }
+      currentAudioUrl = null;
     }
     currentAudio.src = '';
     currentAudio = null;
@@ -205,9 +268,11 @@ async function pump(lang: string): Promise<void> {
     }
   } finally {
     pumping = false;
-    if (mySession === speechSession && textQueue.length > 0) {
+    if (textQueue.length > 0) {
       // A new chunk arrived during the final await — keep pumping so it isn't
       // stranded (its own pump() call returned early while we were running).
+      // This also covers the case where the session was superseded mid-await:
+      // the queue then belongs to the *new* session and must still be drained.
       void pump(lang);
     } else if (mySession === speechSession) {
       speaking = false;
@@ -216,12 +281,34 @@ async function pump(lang: string): Promise<void> {
   }
 }
 
-/** Fetch one chunk's audio from /api/tts; fall back to speechSynthesis on any error. */
+/** Build a browser-voice utterance for `chunk` (the single fallback voice). */
+function localItem(chunk: string, lang: string): QueueItem | null {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
+  if (!preferredVoice) loadVoice(); // voices may have arrived since page load
+  const u = new SpeechSynthesisUtterance(chunk);
+  u.lang = preferredVoice?.lang || lang;
+  if (preferredVoice) u.voice = preferredVoice;
+  u.rate = 0.98;
+  u.pitch = 1.0;
+  return { kind: 'local', utt: u };
+}
+
+/**
+ * Fetch one chunk's audio from /api/tts.
+ *
+ * The engine is chosen once per page-load and then locked (`ttsMode`): the
+ * first chunk decides, and every later chunk uses the same one. Previously
+ * each chunk independently fell back to the browser voice on any error, so a
+ * single slow/failed request in the middle of a reply switched voices
+ * mid-thought — the "multiple voices" bug. Once locked to 'remote', a failed
+ * chunk is skipped (silence) rather than spoken by a different voice.
+ */
 async function fetchItem(
   chunk: string,
   lang: string,
   mySession: number,
 ): Promise<QueueItem | null> {
+  if (ttsMode === 'local') return localItem(chunk, lang);
   try {
     const res = await fetch('/api/tts', {
       method: 'POST',
@@ -231,19 +318,23 @@ async function fetchItem(
     });
     if (!res.ok) throw new Error(`tts ${res.status}`);
     const blob = await res.blob();
+    if (blob.size === 0) throw new Error('tts empty');
     if (mySession !== speechSession) return null;
+    ttsMode = 'remote'; // lock in the neural voice for the rest of the session
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     audio.preload = 'auto';
     return { kind: 'remote', audio, url };
   } catch {
     if (mySession !== speechSession) return null;
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
-    const u = new SpeechSynthesisUtterance(chunk);
-    u.lang = lang;
-    if (preferredVoice) u.voice = preferredVoice;
-    u.rate = 0.98;
-    return { kind: 'local', utt: u };
+    if (ttsMode === 'remote') {
+      // The neural voice already spoke earlier in this session; a one-off
+      // failure must not switch voices mid-reply. Skip this chunk instead.
+      return null;
+    }
+    // Nothing has spoken yet — commit to the browser voice for the session.
+    ttsMode = 'local';
+    return localItem(chunk, lang);
   }
 }
 
@@ -259,16 +350,31 @@ function playItem(item: QueueItem, mySession: number): Promise<void> {
       speaking = true;
       notifyState(true);
     }
+    let settled = false;
     const done = () => {
-      if (item.kind === 'remote' && currentAudio === item.audio) currentAudio = null;
+      // `onended` + `onerror` can both fire; resolving twice would let the
+      // pump start the next chunk while this one is still audible.
+      if (settled) return;
+      settled = true;
+      if (item.kind === 'remote') {
+        if (currentAudio === item.audio) {
+          currentAudio = null;
+          currentAudioUrl = null;
+        }
+        cancelItem(item); // revoke the blob URL now that playback is over
+      }
       resolve();
     };
     if (item.kind === 'remote') {
       currentAudio = item.audio;
+      currentAudioUrl = item.url;
       item.audio.onended = done;
       item.audio.onerror = done;
       void item.audio.play().catch(done);
     } else {
+      // Clear anything the browser still has queued so two utterances can
+      // never speak over each other.
+      window.speechSynthesis.cancel();
       item.utt.onend = done;
       item.utt.onerror = done;
       window.speechSynthesis.speak(item.utt);
