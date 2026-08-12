@@ -214,6 +214,59 @@ describe('voice consistency', () => {
 });
 
 describe('playback serialisation', () => {
+  it('does not swap to a better voice when onvoiceschanged fires mid-reply', async () => {
+    // Chrome populates getVoices() asynchronously and fires onvoiceschanged
+    // after playback may already have begun. Re-picking then would change the
+    // voice mid-reply — exactly the bug this module prevents.
+    installedVoices = [new FakeVoice('Zira', 'en-US')]; // low-ranked female
+    installSpeechSynthesis();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('offline'); // force the browser-voice path
+      }),
+    );
+    await loadFreshModule();
+
+    speech.beginSpeech();
+    speech.speakChunk('First.');
+    await flush(40);
+
+    // A higher-ranked voice shows up part-way through the reply.
+    installedVoices = [new FakeVoice('Zira', 'en-US'), new FakeVoice('Samantha', 'en-US')];
+    (globalThis as any).speechSynthesis.onvoiceschanged?.();
+
+    speech.speakChunk('Second.');
+    await flush(60);
+    speech.speakChunk('Third.');
+    await flush(60);
+
+    expect(spoken.length).toBe(3);
+    expect(new Set(spoken.map((s) => s.voice)).size).toBe(1);
+  });
+
+  it('still picks the female voice when the list fills in before any speech', async () => {
+    // The freeze must not stop the *initial* async population from being used.
+    installedVoices = [];
+    installSpeechSynthesis();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('offline');
+      }),
+    );
+    await loadFreshModule(); // imported with zero voices available
+
+    installedVoices = [new FakeVoice('Daniel', 'en-GB'), new FakeVoice('Samantha', 'en-US')];
+    (globalThis as any).speechSynthesis.onvoiceschanged?.();
+
+    speech.beginSpeech();
+    speech.speakChunk('Hello.');
+    await flush(60);
+
+    expect(spoken.map((s) => s.voice)).toEqual(['Samantha']);
+  });
+
   it('plays chunks one at a time, in order, with no overlap', async () => {
     const active: number[] = [];
     let concurrent = 0;

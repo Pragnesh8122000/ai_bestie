@@ -65,6 +65,9 @@ type QueueItem =
 
 let stateListener: TtsStateListener | null = null;
 let preferredVoice: SpeechSynthesisVoice | null = null;
+// Set once the browser voice has actually been used, after which the choice is
+// frozen (see loadVoice) so a late `onvoiceschanged` can't swap voices.
+let voiceLocked = false;
 
 /**
  * Which engine speaks. Decided once per page-load by the first chunk that
@@ -129,6 +132,12 @@ function scoreVoice(v: SpeechSynthesisVoice): number {
 
 function loadVoice(): void {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+  // Once a voice has actually spoken, it is frozen for the session. Chrome
+  // populates getVoices() asynchronously and fires `onvoiceschanged` after
+  // playback may already have started; re-picking then would swap the voice
+  // mid-reply (e.g. Zira → Samantha), which is the very bug this module
+  // exists to prevent.
+  if (voiceLocked) return;
   const voices = window.speechSynthesis.getVoices();
   if (!voices || voices.length === 0) return;
   const en = voices.filter((v) => v.lang && v.lang.toLowerCase().startsWith('en'));
@@ -285,6 +294,8 @@ async function pump(lang: string): Promise<void> {
 function localItem(chunk: string, lang: string): QueueItem | null {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
   if (!preferredVoice) loadVoice(); // voices may have arrived since page load
+  // From here on the choice is final for the session.
+  voiceLocked = true;
   const u = new SpeechSynthesisUtterance(chunk);
   u.lang = preferredVoice?.lang || lang;
   if (preferredVoice) u.voice = preferredVoice;
