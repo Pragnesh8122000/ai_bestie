@@ -230,11 +230,28 @@ export const useChatStore = create<ChatState>((set, getState) => ({
                 set({ streamingContent: assistantContent });
                 if (getState().ttsEnabled) {
                   ttsSentenceBuffer += event.content;
-                  // Flush completed sentences to the TTS queue as they arrive.
-                  const m = ttsSentenceBuffer.match(/^([\s\S]*?[.!?…\n])\s*([\s\S]*)$/);
-                  if (m) {
-                    speakChunk(m[1]);
-                    ttsSentenceBuffer = m[2];
+                  // Hold for 2 completed sentences before flushing (not 1) so
+                  // the TTS model synthesizes them together and carries
+                  // intonation across the boundary — flushing one sentence
+                  // per request made the neural voice sound choppy, since
+                  // Kokoro resets prosody at the start of every request. Cap
+                  // at ~280 chars so first-audio latency stays low even when
+                  // sentences run long, and don't wait past that even with
+                  // only 1 complete sentence so far.
+                  const sentences = ttsSentenceBuffer.match(/[^.!?…\n]*[.!?…\n]+\s*/g) || [];
+                  if (sentences.length >= 2 || ttsSentenceBuffer.length > 280) {
+                    const take = sentences.length >= 2 ? 2 : sentences.length;
+                    const flushEnd = sentences.slice(0, take).reduce((n, s) => n + s.length, 0);
+                    if (flushEnd > 0) {
+                      speakChunk(ttsSentenceBuffer.slice(0, flushEnd));
+                      ttsSentenceBuffer = ttsSentenceBuffer.slice(flushEnd);
+                    } else if (ttsSentenceBuffer.length > 280) {
+                      // No sentence boundary yet but the buffer is already
+                      // long (e.g. a run-on clause) — flush it as-is so audio
+                      // still starts promptly.
+                      speakChunk(ttsSentenceBuffer);
+                      ttsSentenceBuffer = '';
+                    }
                   }
                 }
                 break;

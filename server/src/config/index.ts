@@ -84,20 +84,36 @@ export const config = {
     url: process.env.CLIENT_URL || 'http://localhost:5173',
   },
   // Neural text-to-speech (Kokoro via sherpa-onnx) running in-process. Free,
-  // open-source, no paid API. The ~330 MB model is NOT committed — download it
+  // open-source, no paid API. The ~360 MB model is NOT committed — download it
   // once with `npm run download-tts-model -w server`. If the model is absent
   // or TTS is disabled, the /api/tts endpoint returns 503 and the client falls
   // back to the browser speechSynthesis voice, so voice replies keep working.
+  //
+  // Default is Kokoro v1.0 multi-lang (53 speakers). It replaced the older
+  // kokoro-en-v0_19 (11 speakers), whose flat intonation was the main reason
+  // replies sounded robotic. Set TTS_MODEL_VERSION=v0_19 (plus TTS_MODEL_PATH)
+  // to A/B against the old model without a code change.
   tts: {
     enabled: process.env.TTS_ENABLED !== 'false',
+    // 'v1_0' (default, 53 speakers) or 'v0_19' (legacy, 11 speakers). The
+    // speaker-id space differs between them, so ttsService validates the sid
+    // against the version actually in use.
+    modelVersion: process.env.TTS_MODEL_VERSION?.trim() === 'v0_19' ? 'v0_19' : 'v1_0',
     modelDir:
       process.env.TTS_MODEL_PATH ||
-      path.resolve(rootDir, 'server/.tts-models/kokoro-en-v0_19'),
-    // Kokoro English v0_19 speaker id (0=af, 1=af_bella, 2=af_nicole, ...).
+      path.resolve(
+        rootDir,
+        process.env.TTS_MODEL_VERSION?.trim() === 'v0_19'
+          ? 'server/.tts-models/kokoro-en-v0_19'
+          : 'server/.tts-models/kokoro-multi-lang-v1_0',
+      ),
+    // Kokoro speaker id. For v1.0: 3=af_heart, 2=af_bella, 1=af_aoede, ...
     // A blank value means "unset" — `Number('')` is 0, which would silently
     // pick a different voice than the intended default. ttsService validates
     // this further and only allows female speaker ids.
-    sid: process.env.TTS_SID?.trim() ? Number(process.env.TTS_SID) : 2,
+    sid: process.env.TTS_SID?.trim() ? Number(process.env.TTS_SID) : undefined,
+    // Slightly under 1.0 reads as more relaxed/human than the default clip.
+    speed: Number(process.env.TTS_SPEED ?? 0.95),
     maxChars: Number(process.env.TTS_MAX_CHARS ?? 1000),
   },
 } as const;

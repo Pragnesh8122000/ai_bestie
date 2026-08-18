@@ -278,10 +278,17 @@ Voice replies use **Kokoro** via `sherpa-onnx-node` — a high-quality neural TT
 that runs **in-process** (no sidecar, no paid API, Apache-2.0). Toggle "voice
 replies" on in the chat header; Sam's spoken replies stream sentence-by-sentence.
 
-The ~330 MB model is **not committed** to the repo. Download it once (gitignored):
+The default model is **Kokoro v1.0 multi-lang** (53 speakers). It replaced the
+older English-only `kokoro-en-v0_19`, whose flat, sentence-by-sentence
+intonation was the main reason replies sounded robotic.
+
+The ~360 MB model is **not committed** to the repo. Download it once (gitignored):
 
 ```bash
-npm run download-tts-model -w server   # → server/.tts-models/kokoro-en-v0_19/
+npm run download-tts-model -w server   # → server/.tts-models/kokoro-multi-lang-v1_0/
+
+# To A/B against the old model:
+TTS_MODEL_VERSION=v0_19 npm run download-tts-model -w server
 ```
 
 Then start the server as usual — the boot log will print `TTS: Kokoro loaded`.
@@ -294,9 +301,10 @@ If the model is absent or `TTS_ENABLED=false`, the `/api/tts` endpoint returns
 Sam speaks with exactly **one female voice** per session — the two engines are
 never mixed mid-reply:
 
-- **Server:** `TTS_SID` is validated against the female Kokoro speaker ids
-  (0-4, 7, 8). A male or invalid id falls back to `2` (af_nicole) instead of
-  silently changing the character's voice.
+- **Server:** `TTS_SID` is validated against the *English female* Kokoro
+  speaker ids for the model version in use (v1.0: 0-10, 20-23; v0_19: 0-4, 7,
+  8). A male, non-English, or invalid id falls back to the default (v1.0: `3` =
+  af_heart) instead of silently changing the character's voice or language.
 - **Client:** the engine (neural vs browser) is chosen by the first chunk that
   actually produces audio and then **locked** for the session. A transient
   `/api/tts` failure mid-reply skips that sentence rather than speaking it in a
@@ -344,7 +352,7 @@ See [docs/persona-system.md](docs/persona-system.md) for the full 5-layer prompt
 | `npm run lint` | Lint both workspaces |
 | `npm run test` | Run tests in both workspaces |
 | `npm run seed` | Seed database with test data |
-| `npm run download-tts-model -w server` | Download the Kokoro TTS model (~330 MB, one-time, gitignored) |
+| `npm run download-tts-model -w server` | Download the Kokoro TTS model (~360 MB, one-time, gitignored) |
 
 ## 📋 Environment Variables
 
@@ -363,8 +371,10 @@ See [docs/persona-system.md](docs/persona-system.md) for the full 5-layer prompt
 | `OPENROUTER_FALLBACK_MODELS` | No | OpenRouter models tried in order if the primary 429s |
 | `OPENAI_API_KEY` | No | Not used. The OpenAI Whisper API is a *paid* STT service with no permanent free tier, so it is intentionally not integrated; the browser Web Speech API is the free STT default. |
 | `TTS_ENABLED` | No | Enable neural TTS (default: `true`). If the model isn't downloaded, voice replies fall back to the browser voice. |
-| `TTS_MODEL_PATH` | No | Path to the Kokoro model dir (default: `server/.tts-models/kokoro-en-v0_19`). Override only to use the int8 model. |
-| `TTS_SID` | No | Kokoro speaker id (default: `2` = af_nicole). 0=af, 1=af_bella, 2=af_nicole, … |
+| `TTS_MODEL_VERSION` | No | Kokoro release: `v1_0` (default, 53 speakers) or `v0_19` (legacy, English-only). Also selects the default model path and the valid `TTS_SID` range. |
+| `TTS_MODEL_PATH` | No | Path to the Kokoro model dir (default: `server/.tts-models/kokoro-multi-lang-v1_0`). Override only for a custom/int8 model. |
+| `TTS_SID` | No | Kokoro speaker id (v1.0 default: `3` = af_heart). English female ids: 0=af_alloy, 1=af_aoede, 2=af_bella, 3=af_heart, 5=af_kore, 6=af_nicole, 7=af_nova, 9=af_sarah, 20-23 = British. |
+| `TTS_SPEED` | No | Speaking rate (default: `0.95`, clamped to 0.7-1.3). Below 1.0 sounds more relaxed and less clipped. |
 | `TTS_MAX_CHARS` | No | Max characters per TTS request (default: 1000) |
 | `CLIENT_URL` | No | Frontend URL for CORS (default: http://localhost:5173) |
 

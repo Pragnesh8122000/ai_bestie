@@ -170,6 +170,12 @@ if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
  * Split text into speakable chunks at sentence/clause boundaries, capped so a
  * single chunk stays short (keeps per-request latency low and gives natural
  * pauses between sentences).
+ *
+ * The cap is intentionally >= the ~280-char batches chatStore.ts hands to
+ * speakChunk (2 sentences at a time): letting 2 sentences reach the TTS
+ * model in one request is what gives the neural voice continuous prosody
+ * across the sentence boundary instead of resetting intonation on every
+ * single sentence, which is what made replies sound choppy/robotic.
  */
 function splitChunks(text: string): string[] {
   const parts = text.match(/[^.!?…\n]+[.!?…\n]*\s*|.+/g) || [text];
@@ -178,7 +184,7 @@ function splitChunks(text: string): string[] {
   for (const raw of parts) {
     const piece = raw.trim();
     if (!piece) continue;
-    if ((buf + ' ' + piece).trim().length > 220) {
+    if ((buf + ' ' + piece).trim().length > 320) {
       if (buf.trim()) chunks.push(buf.trim());
       buf = piece;
     } else {

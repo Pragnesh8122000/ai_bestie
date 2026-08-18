@@ -34,25 +34,62 @@ let loadError: string | null = null;
 let loadingPromise: Promise<void> | null = null;
 
 /**
- * Kokoro English v0_19 speaker ids:
+ * Speaker ids differ per Kokoro release, so the allow-list is per version.
+ *
+ * v0_19 (legacy, 11 speakers):
  *   0 af, 1 af_bella, 2 af_nicole, 3 af_sarah, 4 af_sky   (American female)
  *   5 am_adam, 6 am_michael                               (American male)
  *   7 bf_emma, 8 bf_isabella                              (British female)
  *   9 bm_george, 10 bm_lewis                              (British male)
  *
- * The companion is female, so only female ids are allowed. A bad TTS_SID must
- * never silently switch the character's voice (or its gender).
+ * v1_0 (default, 53 speakers) — English female ids only:
+ *   0 af_alloy, 1 af_aoede, 2 af_bella, 3 af_heart, 4 af_jessica, 5 af_kore,
+ *   6 af_nicole, 7 af_nova, 8 af_river, 9 af_sarah, 10 af_sky   (American)
+ *   20 bf_alice, 21 bf_emma, 22 bf_isabella, 23 bf_lily        (British)
+ * Ids 11-19 and 24-27 are male; 28+ are non-English and would change the
+ * character's accent/language, so neither group is selectable.
+ *
+ * The companion is female with one fixed voice. A bad TTS_SID must never
+ * silently switch the character's voice, gender, or language.
  */
-const FEMALE_SIDS = [0, 1, 2, 3, 4, 7, 8];
-const DEFAULT_FEMALE_SID = 2; // af_nicole
+const FEMALE_SIDS_V0_19 = [0, 1, 2, 3, 4, 7, 8];
+const FEMALE_SIDS_V1_0 = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 21, 22, 23];
+
+// af_heart is the warmest/most expressive American female voice in v1.0 and is
+// the closest match to the companion's persona; af_nicole is the v0_19 default
+// the app shipped with.
+const DEFAULT_SID_V1_0 = 3; // af_heart
+const DEFAULT_SID_V0_19 = 2; // af_nicole
+
+function voiceTable(): { allowed: number[]; fallback: number } {
+  return config.tts.modelVersion === 'v0_19'
+    ? { allowed: FEMALE_SIDS_V0_19, fallback: DEFAULT_SID_V0_19 }
+    : { allowed: FEMALE_SIDS_V1_0, fallback: DEFAULT_SID_V1_0 };
+}
 
 /** The one voice the app speaks with. Resolved once, never per-request. */
 export function resolveSid(): number {
+  const { allowed, fallback } = voiceTable();
   const sid = config.tts.sid;
-  return Number.isInteger(sid) && FEMALE_SIDS.includes(sid) ? sid : DEFAULT_FEMALE_SID;
+  return typeof sid === 'number' && Number.isInteger(sid) && allowed.includes(sid)
+    ? sid
+    : fallback;
 }
 
 const VOICE_SID = resolveSid();
+
+/**
+ * Speaking rate. Kokoro's default of 1.0 is a touch clipped for conversational
+ * speech; ~0.95 reads as more relaxed. Clamped so a bad TTS_SPEED can't render
+ * the companion unintelligible.
+ */
+export function resolveSpeed(): number {
+  const s = config.tts.speed;
+  if (!Number.isFinite(s)) return 0.95;
+  return Math.min(1.3, Math.max(0.7, s));
+}
+
+const VOICE_SPEED = resolveSpeed();
 
 function modelFilesPresent(): boolean {
   const dir = config.tts.modelDir;
@@ -62,6 +99,18 @@ function modelFilesPresent(): boolean {
     fs.existsSync(path.join(dir, 'tokens.txt')) &&
     fs.existsSync(path.join(dir, 'espeak-ng-data'))
   );
+}
+
+/**
+ * v1.0 ships pronunciation lexicons; they fix the mangled words (names,
+ * acronyms, common contractions) that espeak-ng alone gets wrong and which
+ * make a reply sound synthetic. v0_19 has none, so the option is omitted
+ * there — passing a missing path makes the addon fail to load the model.
+ */
+function lexiconPath(): string | undefined {
+  if (config.tts.modelVersion === 'v0_19') return undefined;
+  const us = path.join(config.tts.modelDir, 'lexicon-us-en.txt');
+  return fs.existsSync(us) ? us : undefined;
 }
 
 /** Load the model once. Idempotent and safe to call repeatedly. */
@@ -85,12 +134,18 @@ export async function initTts(): Promise<void> {
             voices: path.join(dir, 'voices.bin'),
             tokens: path.join(dir, 'tokens.txt'),
             dataDir: path.join(dir, 'espeak-ng-data'),
+            ...(lexiconPath() ? { lexicon: lexiconPath()! } : {}),
           },
           debug: false,
           numThreads: 1,
           provider: 'cpu',
         },
-        maxNumSentences: 1,
+        // No maxNumSentences: the addon logs "max_num_sentences != 1 is
+        // ignored for Kokoro TTS models" and always synthesizes whatever text
+        // it's given as one continuous utterance regardless of this setting.
+        // Real prosody continuity across sentences therefore comes from the
+        // *caller* sending multiple sentences per request, not this option —
+        // see chatStore.ts's sentence-batching before speakChunk().
       });
     } catch (e) {
       loadError = (e as Error).message;
@@ -108,6 +163,8 @@ export interface TtsStatus {
   error: string | null;
   sampleRate: number | null;
   sid: number;
+  speed: number;
+  modelVersion: string;
 }
 
 export function ttsStatus(): TtsStatus {
@@ -116,6 +173,8 @@ export function ttsStatus(): TtsStatus {
     error: loadError,
     sampleRate: tts ? tts.sampleRate : null,
     sid: VOICE_SID,
+    speed: VOICE_SPEED,
+    modelVersion: config.tts.modelVersion,
   };
 }
 
@@ -153,7 +212,7 @@ export async function synthesize(text: string, signal: AbortSignal): Promise<Buf
       text: trimmed,
       generationConfig: new GenerationConfig({
         sid: VOICE_SID,
-        speed: 1.0,
+        speed: VOICE_SPEED,
       }),
     }),
   );

@@ -10,6 +10,8 @@ declare module 'sherpa-onnx-node' {
     voices: string;
     tokens: string;
     dataDir: string;
+    /** Comma-separated pronunciation lexicon paths (Kokoro v1.0+ only). */
+    lexicon?: string;
   }
 
   export interface OfflineTtsModelConfig {

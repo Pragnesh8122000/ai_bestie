@@ -1,11 +1,16 @@
 /**
- * One-time download of the Kokoro English TTS model for sherpa-onnx.
+ * One-time download of the Kokoro TTS model for sherpa-onnx.
  *
  *   npm run download-tts-model -w server
+ *   TTS_MODEL_VERSION=v0_19 npm run download-tts-model -w server   # legacy
  *
- * Fetches `kokoro-en-v0_19.tar.bz2` (~330 MB) from the k2-fsa GitHub release
- * and extracts it into `server/.tts-models/kokoro-en-v0_19/`. Idempotent: if
- * the model files are already present, it exits without re-downloading.
+ * Fetches `kokoro-multi-lang-v1_0.tar.bz2` (~360 MB) from the k2-fsa GitHub
+ * release and extracts it into `server/.tts-models/kokoro-multi-lang-v1_0/`.
+ * v1.0 replaced the older English-only v0_19: it has 53 speakers, noticeably
+ * more natural prosody, and ships pronunciation lexicons. Pass
+ * TTS_MODEL_VERSION=v0_19 to fetch the legacy model instead (for A/B).
+ * Idempotent: if the model files are already present, it exits without
+ * re-downloading.
  *
  * The model is gitignored — it is never committed. Extraction shells out to
  * `tar` (present on macOS/Linux). Run this on the build host before starting
@@ -16,15 +21,18 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
 
-const URL =
-  'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2';
-const ARCHIVE_NAME = 'kokoro-en-v0_19.tar.bz2';
+const MODEL_NAME =
+  process.env.TTS_MODEL_VERSION?.trim() === 'v0_19'
+    ? 'kokoro-en-v0_19'
+    : 'kokoro-multi-lang-v1_0';
+const ARCHIVE_NAME = `${MODEL_NAME}.tar.bz2`;
+const URL = `https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/${ARCHIVE_NAME}`;
 
 // Resolve to <repo>/server/.tts-models whether run via tsx (src/scripts) or
 // compiled (dist/scripts) — both are 3 levels below the repo root.
 const repoRoot = path.resolve(__dirname, '../../..');
 const targetDir = path.join(repoRoot, 'server', '.tts-models');
-const modelDir = path.join(targetDir, 'kokoro-en-v0_19');
+const modelDir = path.join(targetDir, MODEL_NAME);
 
 function modelReady(): boolean {
   return (
@@ -45,7 +53,7 @@ async function download(): Promise<void> {
   const archive = path.join(targetDir, ARCHIVE_NAME);
 
   console.log(`Downloading ${URL}`);
-  console.log('(~330 MB — this may take a few minutes on the first run)');
+  console.log('(~360 MB — this may take a few minutes on the first run)');
   const res = await fetch(URL);
   if (!res.ok || !res.body) {
     throw new Error(`Download failed: HTTP ${res.status} ${res.statusText}`);
@@ -83,7 +91,7 @@ async function download(): Promise<void> {
   if (!modelReady()) {
     throw new Error(
       `Extraction finished but expected files are missing under ${modelDir}. ` +
-        'Check the archive contents (kokoro-en-v0_19/ should contain model.onnx, voices.bin, tokens.txt, espeak-ng-data/).',
+        `Check the archive contents (${MODEL_NAME}/ should contain model.onnx, voices.bin, tokens.txt, espeak-ng-data/).`,
     );
   }
   console.log(`\nTTS model ready at ${modelDir}`);

@@ -72,8 +72,10 @@ OPENROUTER_API_KEY=...        # OpenRouter — fallback (free models)
 
 # TTS (neural voice replies; optional — falls back to browser voice if absent)
 TTS_ENABLED=true
-# TTS_MODEL_PATH defaults to server/.tts-models/kokoro-en-v0_19 (set only to use the int8 model)
-TTS_SID=2
+# TTS_MODEL_PATH defaults to server/.tts-models/kokoro-multi-lang-v1_0
+TTS_MODEL_VERSION=v1_0
+TTS_SID=3      # af_heart
+TTS_SPEED=0.95
 
 # No Anthropic/OpenAI/Voyage/Redis keys — those services are not used.
 ```
@@ -137,24 +139,29 @@ cd client && npm run build
 Voice replies use **Kokoro** via the `sherpa-onnx-node` native addon, running
 **in-process** (no sidecar — keeps the app on a single Render free web service).
 
-1. **Download the model** (one-time, ~330 MB, gitignored). The render.yaml
-   build command above runs this automatically; for a manual deploy:
+1. **Download the model** (one-time, ~360 MB, gitignored). Defaults to Kokoro
+   v1.0 multi-lang (53 speakers), which sounds markedly less robotic than the
+   old v0_19. The render.yaml build command above runs this automatically; for
+   a manual deploy:
    ```bash
-   npm run download-tts-model -w server   # → server/.tts-models/kokoro-en-v0_19/
+   npm run download-tts-model -w server   # → server/.tts-models/kokoro-multi-lang-v1_0/
    ```
 2. **Native libraries**: the addon's shared libraries must be on the linker
    path *before* Node starts. `npm start` handles this via
    `server/scripts/with-tts-env.cjs`. If you set a custom start command, prefix
    `LD_LIBRARY_PATH` as shown in the Start Command section.
-3. **Env vars**: `TTS_ENABLED=true` (default). `TTS_MODEL_PATH` only needs
-   setting to switch to the int8 model. `TTS_SID` selects the speaker.
+3. **Env vars**: `TTS_ENABLED=true` (default). `TTS_MODEL_VERSION` picks the
+   Kokoro release (`v1_0` default, `v0_19` legacy) and with it the default
+   model path and valid speaker-id range. `TTS_MODEL_PATH` only needs setting
+   for a custom/int8 model. `TTS_SID` selects the speaker, `TTS_SPEED` the
+   rate.
 4. **Fallback**: if the model is missing or fails to load, `/api/tts` returns
    503 and the client automatically uses the browser `speechSynthesis` voice —
    voice replies keep working, just lower quality.
 
 ### 512 MB RAM caveat (free tier)
 
-The FP32 Kokoro model (`kokoro-en-v0_19`, ~330 MB on disk) can use
+The FP32 Kokoro model (`kokoro-multi-lang-v1_0`, ~360 MB on disk) can use
 ~450–650 MB resident RAM once loaded, which may exceed a Render free
 instance's 512 MB limit and get OOM-killed. If that happens:
 
