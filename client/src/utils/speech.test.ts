@@ -481,24 +481,35 @@ describe('inter-sentence gap', () => {
   });
 
   it('discards a prefetched chunk when speech is stopped', async () => {
+    // Distinct blob URLs so a *specific* one can be traced. Counting total
+    // revokes is not enough: normal playback revokes its own URL, so a naive
+    // "something was revoked" assertion passes even when the prefetched chunk
+    // leaks (verified by deleting the cleanup line — the test still passed).
+    let issued = 0;
+    const created: string[] = [];
     const revoked: string[] = [];
+    (globalThis as any).URL.createObjectURL = () => {
+      const u = `blob:chunk-${++issued}`;
+      created.push(u);
+      return u;
+    };
     installTimedTts(30, 200);
     await loadFreshModule();
-    // Installed after the module loads so the counter only sees this test.
     (globalThis as any).URL.revokeObjectURL = (u: string) => revoked.push(u);
 
     speech.beginSpeech();
     speech.speakChunk('One.');
     speech.speakChunk('Two.');
-    await flush(120); // chunk 1 playing, chunk 2 synthesized and waiting
+    await flush(120); // chunk 1 playing, chunk 2 prefetched and waiting
     const countAtStop = spoken.length;
+    expect(created.length).toBe(2); // the prefetch really did happen
     speech.stopSpeaking();
     await flush(300);
 
-    // The prefetched chunk never plays, and its blob URL is released rather
-    // than leaked for the lifetime of the page.
+    // The prefetched chunk never plays...
     expect(spoken.length).toBe(countAtStop);
-    expect(revoked.length).toBeGreaterThan(0);
+    // ...and *its* blob URL specifically is released, not just chunk 1's.
+    expect(revoked).toContain(created[1]);
   });
 
   it('still falls back to one browser voice when the very first chunk fails', async () => {
