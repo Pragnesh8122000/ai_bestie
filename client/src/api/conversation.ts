@@ -7,6 +7,11 @@ export interface Conversation {
   avatarId: string;
   lastMessageAt: string;
   createdAt: string;
+  // Added alongside multi-conversation support. Optional so responses that
+  // predate the backend deploy still typecheck.
+  titleIsCustom?: boolean;
+  messageCount?: number;
+  lastMessagePreview?: string;
 }
 
 export interface Message {
@@ -18,7 +23,13 @@ export interface Message {
 
 interface ConversationsResponse {
   success: boolean;
-  data: { conversations: Conversation[] };
+  data: { conversations: Conversation[]; hasMore: boolean };
+}
+
+interface ListParams {
+  limit?: number;
+  /** ISO timestamp cursor — returns conversations older than this. */
+  before?: string;
 }
 
 interface ConversationDetailResponse {
@@ -55,8 +66,8 @@ interface CreateConversationInput {
 }
 
 export const conversationApi = {
-  list: () =>
-    apiClient.get<ConversationsResponse>('/conversations'),
+  list: (params?: ListParams) =>
+    apiClient.get<ConversationsResponse>('/conversations', { params }),
 
   getDefault: () =>
     apiClient.get<DefaultConversationResponse>('/conversations/default'),
@@ -65,7 +76,16 @@ export const conversationApi = {
     apiClient.get<ConversationDetailResponse>(`/conversations/${id}`),
 
   create: (data: CreateConversationInput) =>
-    apiClient.post<{ success: boolean; data: { conversation: Conversation } }>('/conversations', data),
+    apiClient.post<{ success: boolean; data: { conversation: Conversation & { messages: Message[] } } }>(
+      '/conversations',
+      data,
+    ),
+
+  rename: (id: string, title: string) =>
+    apiClient.patch<{ success: boolean; data: { conversation: Conversation } }>(
+      `/conversations/${id}`,
+      { title },
+    ),
 
   delete: (id: string) =>
     apiClient.delete<{ success: boolean; message: string }>(`/conversations/${id}`),

@@ -1,23 +1,79 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useChatStore } from '../stores/chatStore';
 import { useAuthStore } from '../stores/authStore';
 import ChatWindow from '../components/ChatWindow';
 import ChatInput from '../components/ChatInput';
+import ConversationList from '../components/ConversationList';
 import VoiceOrb from '../components/VoiceOrb';
+
+const DESKTOP_QUERY = '(min-width: 640px)';
 
 export default function ChatPage() {
   const { user, logout } = useAuthStore();
   const openDefaultConversation = useChatStore((s) => s.openDefaultConversation);
   const abortStream = useChatStore((s) => s.abortStream);
   const hasConversation = useChatStore((s) => s.activeConversation !== null);
+  const activeTitle = useChatStore((s) => s.activeConversation?.title);
   const ttsEnabled = useChatStore((s) => s.ttsEnabled);
   const toggleTts = useChatStore((s) => s.toggleTts);
+  const isSidebarOpen = useChatStore((s) => s.isSidebarOpen);
+  const setSidebarOpen = useChatStore((s) => s.setSidebarOpen);
+  const error = useChatStore((s) => s.error);
+  const clearError = useChatStore((s) => s.clearError);
+
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   // Only auto-open if there's no conversation yet (avoids refetch + the
   // "connecting" flash on every route-away-and-back).
   useEffect(() => {
     if (!hasConversation) openDefaultConversation();
   }, [openDefaultConversation, hasConversation]);
+
+  // Close the mobile drawer when the viewport crosses into desktop, otherwise
+  // the body scroll lock below would survive with no visible way to release it.
+  useEffect(() => {
+    const mq = window.matchMedia(DESKTOP_QUERY);
+    const onChange = (e: MediaQueryListEvent) => {
+      if (e.matches) setSidebarOpen(false);
+    };
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, [setSidebarOpen]);
+
+  // Lock body scroll and wire Escape while the drawer is open.
+  useEffect(() => {
+    if (!isSidebarOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSidebarOpen(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [isSidebarOpen, setSidebarOpen]);
+
+  // Move focus into the drawer on open and hand it back to the trigger on
+  // close, so keyboard users aren't dropped at the top of the document.
+  useEffect(() => {
+    if (isSidebarOpen) {
+      const timer = setTimeout(() => closeButtonRef.current?.focus(), 50);
+      return () => clearTimeout(timer);
+    }
+    // Only steal focus back if it's still loose in the body.
+    if (document.activeElement === document.body) menuButtonRef.current?.focus();
+  }, [isSidebarOpen]);
+
+  // Auto-dismiss transient errors so the toast can't stack up or linger.
+  useEffect(() => {
+    if (!error) return;
+    const timer = setTimeout(clearError, 5000);
+    return () => clearTimeout(timer);
+  }, [error, clearError]);
 
   // Abort any in-flight stream when the page unmounts (navigation/logout) so
   // the server stops burning the free-tier LLM quota into a dead connection.
@@ -41,25 +97,9 @@ export default function ChatPage() {
           <span className="font-display text-lg tracking-tight text-linen">AI Bestie</span>
         </div>
 
-        <div className="px-4">
-          <button
-            type="button"
-            onClick={() => openDefaultConversation()}
-            className="flex w-full items-center justify-center gap-2 rounded-2xl border border-ember/40 px-4 py-3 font-sans text-sm font-medium text-ember transition-colors duration-150 hover:bg-ember/10 active:scale-[0.98]"
-          >
-            <PlusIcon />
-            New Chat
-          </button>
-        </div>
+        <ConversationList />
 
-        <nav className="mt-6 flex flex-col gap-1 px-3">
-          <NavItem icon={<ChatIcon />} label="Chats" active />
-          <NavItem icon={<HeartIcon />} label="Memory" />
-          <NavItem icon={<UserIcon />} label="Profile" />
-          <NavItem icon={<GearIcon />} label="Settings" />
-        </nav>
-
-        <div className="mt-auto flex flex-col gap-3 border-t border-line/60 px-4 py-4">
+        <div className="flex flex-col gap-3 border-t border-line/60 px-4 py-4">
           <div className="flex items-center justify-between rounded-2xl border border-line/60 bg-clay/20 px-4 py-3">
             <div className="flex items-center gap-2.5">
               <WaveIcon active={ttsEnabled} />
@@ -85,9 +125,83 @@ export default function ChatPage() {
         </div>
       </aside>
 
+      {/* Mobile drawer — same list, slid over the page */}
+      <AnimatePresence>
+        {isSidebarOpen && (
+          <>
+            <motion.div
+              key="scrim"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              onClick={() => setSidebarOpen(false)}
+              className="fixed inset-0 z-40 bg-ink/70 backdrop-blur-sm sm:hidden"
+              aria-hidden="true"
+            />
+            <motion.aside
+              key="drawer"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Conversations"
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+              className="fixed inset-y-0 left-0 z-50 flex w-[82vw] max-w-xs flex-col border-r border-line/60 bg-ink-2 sm:hidden"
+            >
+              <div className="flex items-center justify-between px-4 py-4">
+                <div className="flex items-center gap-2.5">
+                  <VoiceOrb state="idle" size={24} />
+                  <span className="font-display text-base tracking-tight text-linen">AI Bestie</span>
+                </div>
+                <button
+                  type="button"
+                  ref={closeButtonRef}
+                  onClick={() => setSidebarOpen(false)}
+                  aria-label="Close conversations"
+                  className="flex h-10 w-10 items-center justify-center rounded-full text-linen-dim transition-colors duration-150 hover:text-linen"
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+
+              <ConversationList />
+
+              <div className="flex items-center gap-3 border-t border-line/60 px-4 py-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-ember to-ember-dim font-sans text-sm font-semibold text-ink">
+                  {initial}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-sans text-sm text-linen">{user?.name || 'Test User'}</p>
+                  <p className="truncate font-mono text-[10px] text-linen-dim">{user?.email}</p>
+                </div>
+              </div>
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
+
       {/* Main column */}
       <div className="flex flex-1 flex-col">
-        <header className="flex items-center justify-end gap-2 px-4 py-3 sm:px-8 sm:py-4">
+        <header className="flex items-center justify-between gap-2 px-4 py-3 sm:px-8 sm:py-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              ref={menuButtonRef}
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Open conversations"
+              aria-expanded={isSidebarOpen}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line text-linen-dim transition-colors duration-150 hover:border-ember hover:text-ember sm:hidden"
+            >
+              <MenuIcon />
+            </button>
+            <h1 className="min-w-0 truncate font-display text-base text-linen" title={activeTitle}>
+              {activeTitle || 'AI Bestie'}
+            </h1>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
             onClick={toggleTts}
@@ -117,6 +231,7 @@ export default function ChatPage() {
           >
             Sign out
           </button>
+          </div>
         </header>
 
         <main className="flex flex-1 flex-col overflow-hidden">
@@ -124,25 +239,33 @@ export default function ChatPage() {
           <ChatInput />
         </main>
       </div>
-    </div>
-  );
-}
 
-function NavItem({ icon, label, active }: { icon: React.ReactNode; label: string; active?: boolean }) {
-  return (
-    <button
-      type="button"
-      disabled={!active}
-      title={active ? undefined : `${label} — coming soon`}
-      className={`flex items-center gap-3 rounded-xl px-3 py-2.5 font-sans text-sm transition-colors duration-150 ${
-        active
-          ? 'bg-ember/10 text-ember'
-          : 'text-linen-dim opacity-60'
-      }`}
-    >
-      {icon}
-      {label}
-    </button>
+      {/* Transient errors — the store sets these from every failed action */}
+      <AnimatePresence>
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            role="status"
+            aria-live="polite"
+            className="pointer-events-none fixed inset-x-0 bottom-28 z-[70] flex justify-center px-4 sm:bottom-32"
+          >
+            <button
+              type="button"
+              onClick={clearError}
+              className="pointer-events-auto max-w-md rounded-2xl border border-ember/50 bg-ink-2/95 px-4 py-3 text-left font-sans text-sm text-linen shadow-2xl backdrop-blur-md transition-colors duration-150 hover:border-ember"
+            >
+              {error}
+              <span className="ml-2 font-mono text-[10px] uppercase tracking-[0.14em] text-linen-dim">
+                dismiss
+              </span>
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
@@ -167,49 +290,6 @@ function Switch({ checked, onChange, label }: { checked: boolean; onChange: () =
   );
 }
 
-function PlusIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true">
-      <line x1="12" y1="5" x2="12" y2="19" />
-      <line x1="5" y1="12" x2="19" y2="12" />
-    </svg>
-  );
-}
-
-function ChatIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
-    </svg>
-  );
-}
-
-function HeartIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z" />
-    </svg>
-  );
-}
-
-function UserIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-      <circle cx="12" cy="7" r="4" />
-    </svg>
-  );
-}
-
-function GearIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-    </svg>
-  );
-}
-
 function PeopleIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -229,6 +309,25 @@ function WaveIcon({ active, small }: { active: boolean; small?: boolean }) {
       <line x1="9" y1="6" x2="9" y2="18" />
       <line x1="14" y1="3" x2="14" y2="21" />
       <line x1="19" y1="7" x2="19" y2="17" />
+    </svg>
+  );
+}
+
+function MenuIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true">
+      <line x1="4" y1="7" x2="20" y2="7" />
+      <line x1="4" y1="12" x2="20" y2="12" />
+      <line x1="4" y1="17" x2="20" y2="17" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true">
+      <line x1="6" y1="6" x2="18" y2="18" />
+      <line x1="18" y1="6" x2="6" y2="18" />
     </svg>
   );
 }

@@ -9,7 +9,10 @@ export default function ChatInput() {
   const [isRecording, setIsRecording] = useState(false);
   const [interim, setInterim] = useState('');
   const [micError, setMicError] = useState<string | null>(null);
-  const { sendMessage, isStreaming, activeConversation } = useChatStore();
+  const { sendMessage, isStreaming, activeConversation, isLoadingConversation } = useChatStore();
+  // Switching conversations tears down `activeConversation` while the next one
+  // loads — block input rather than let a send silently no-op.
+  const isBusy = isStreaming || isLoadingConversation || !activeConversation;
   const { personas } = usePersonaStore();
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const sttSupported = isSTTSupported();
@@ -24,7 +27,7 @@ export default function ChatInput() {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!message.trim() || isStreaming) return;
+    if (!message.trim() || isBusy) return;
     const msg = message;
     setMessage('');
     await sendMessage(msg);
@@ -38,7 +41,7 @@ export default function ChatInput() {
   };
 
   const handleMic = async () => {
-    if (isRecording || isStreaming || !sttSupported) return;
+    if (isRecording || isBusy || !sttSupported) return;
     // Stop any in-progress TTS first so Sam's synthesized voice doesn't feed
     // back into the mic (echo loop).
     stopSpeaking();
@@ -86,7 +89,7 @@ export default function ChatInput() {
           <motion.button
             type="button"
             onClick={handleMic}
-            disabled={isStreaming || isRecording}
+            disabled={isBusy || isRecording}
             title={isRecording ? 'Listening…' : `Talk to ${bestieName}`}
             aria-label={isRecording ? 'Listening' : `Talk to ${bestieName}`}
             whileHover={{ scale: 1.05 }}
@@ -107,8 +110,14 @@ export default function ChatInput() {
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={isRecording ? (interim || 'Listening…') : `or type to ${bestieName}…`}
-          disabled={isStreaming}
+          placeholder={
+            isLoadingConversation
+              ? 'Loading…'
+              : isRecording
+                ? interim || 'Listening…'
+                : `or type to ${bestieName}…`
+          }
+          disabled={isBusy}
           rows={1}
           className="flex-1 resize-none rounded-[20px] border border-line bg-clay/40 px-4 py-3 text-[15px] leading-snug text-linen placeholder-linen-dim/60 transition-colors duration-150 focus:border-ember focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         />
@@ -116,7 +125,7 @@ export default function ChatInput() {
         {/* Send — gradient, bold */}
         <motion.button
           type="submit"
-          disabled={!message.trim() || isStreaming}
+          disabled={!message.trim() || isBusy}
           whileHover={{ scale: 1.05, y: -2 }}
           whileTap={{ scale: 0.95 }}
           className="flex h-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-ember to-ember-soft px-6 font-sans text-sm font-semibold text-ink transition-all duration-150 hover:brightness-105 active:brightness-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"

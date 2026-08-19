@@ -27,7 +27,7 @@ function clock(iso?: string): string {
 }
 
 export default function ChatWindow() {
-  const { activeConversation, avatarState, isStreaming, streamingContent, sendMessage } =
+  const { activeConversation, avatarState, isStreaming, streamingContent, sendMessage, isLoadingConversation } =
     useChatStore();
   const { personas } = usePersonaStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -42,7 +42,7 @@ export default function ChatWindow() {
     return (
       <div className="flex flex-1 items-center justify-center px-6">
         <p className="font-mono text-xs uppercase tracking-[0.2em] text-linen-dim">
-          · connecting ·
+          {isLoadingConversation ? '· loading ·' : '· connecting ·'}
         </p>
       </div>
     );

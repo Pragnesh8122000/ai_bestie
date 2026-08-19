@@ -8,6 +8,8 @@ import {
   createConversation,
   listConversations,
   ensureDefaultConversation,
+  renameConversation,
+  archiveConversation,
 } from '../services/chatService';
 
 const router = Router();
@@ -17,12 +19,19 @@ const objectIdSchema = z.string().regex(/^[0-9a-fA-F]{24}$/);
 // All conversation routes require authentication
 router.use(requireAuth);
 
-// GET /api/conversations — list user's conversations
+// GET /api/conversations — list user's conversations (newest activity first)
 router.get(
   '/',
   catchAsync(async (req, res) => {
-    const conversations = await listConversations(req.userId!);
-    res.json({ success: true, data: { conversations } });
+    const querySchema = z.object({
+      limit: z.coerce.number().int().min(1).max(50).optional(),
+      before: z.coerce.date().optional(),
+    });
+
+    const { limit, before } = querySchema.parse(req.query);
+    const { conversations, hasMore } = await listConversations(req.userId!, { limit, before });
+
+    res.json({ success: true, data: { conversations, hasMore } });
   }),
 );
 
@@ -72,8 +81,13 @@ router.post(
         conversation: {
           id: conversation._id.toHexString(),
           title: conversation.title,
-          personaId: conversation.personaId,
+          titleIsCustom: conversation.titleIsCustom,
+          personaId: conversation.personaId.toString(),
           avatarId: conversation.avatarId,
+          messages: [],
+          messageCount: 0,
+          lastMessagePreview: '',
+          lastMessageAt: conversation.lastMessageAt,
           createdAt: conversation.createdAt,
         },
       },
@@ -93,6 +107,7 @@ router.get(
     const conversation = await Conversation.findOne({
       _id: req.params.id,
       userId: req.userId,
+      isArchived: false,
     }).lean();
 
     if (!conversation) {
@@ -105,9 +120,12 @@ router.get(
         conversation: {
           id: conversation._id.toString(),
           title: conversation.title,
+          titleIsCustom: Boolean(conversation.titleIsCustom),
           personaId: conversation.personaId.toString(),
           avatarId: conversation.avatarId,
           messages: conversation.messages,
+          messageCount: conversation.messageCount ?? conversation.messages.length,
+          lastMessagePreview: conversation.lastMessagePreview ?? '',
           createdAt: conversation.createdAt,
           lastMessageAt: conversation.lastMessageAt,
         },
@@ -136,7 +154,42 @@ router.post(
   }),
 );
 
-// DELETE /api/conversations/:id — delete a conversation
+// PATCH /api/conversations/:id — rename a conversation
+router.patch(
+  '/:id',
+  catchAsync(async (req, res) => {
+    const idResult = objectIdSchema.safeParse(req.params.id);
+    if (!idResult.success) {
+      throw new AppError('Conversation not found', 404);
+    }
+
+    const schema = z.object({
+      title: z.string().trim().min(1).max(100),
+    });
+
+    const { title } = schema.parse(req.body);
+
+    const conversation = await renameConversation(req.userId!, String(req.params.id), title);
+
+    if (!conversation) {
+      throw new AppError('Conversation not found', 404);
+    }
+
+    res.json({
+      success: true,
+      data: {
+        conversation: {
+          id: conversation._id.toString(),
+          title: conversation.title,
+          titleIsCustom: conversation.titleIsCustom,
+          lastMessageAt: conversation.lastMessageAt,
+        },
+      },
+    });
+  }),
+);
+
+// DELETE /api/conversations/:id — soft-delete (archive) a conversation
 router.delete(
   '/:id',
   catchAsync(async (req, res) => {
@@ -145,12 +198,9 @@ router.delete(
       throw new AppError('Conversation not found', 404);
     }
 
-    const result = await Conversation.deleteOne({
-      _id: req.params.id,
-      userId: req.userId,
-    });
+    const archived = await archiveConversation(req.userId!, String(req.params.id));
 
-    if (result.deletedCount === 0) {
+    if (!archived) {
       throw new AppError('Conversation not found', 404);
     }
 

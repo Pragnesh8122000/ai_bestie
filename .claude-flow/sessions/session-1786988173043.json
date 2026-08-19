@@ -1,0 +1,19 @@
+{
+  "id": "session-1786988173043",
+  "startedAt": "2026-08-17T17:36:13.043Z",
+  "cwd": "/Users/pragnesh/Development/Projects/ai-bestie",
+  "context": {
+    "lastMatchedPatterns": [
+      "insight-1786552270288-2hw2"
+    ]
+  },
+  "metrics": {
+    "edits": 0,
+    "commands": 0,
+    "tasks": 0,
+    "errors": 0
+  },
+  "updatedAt": "2026-08-17T17:38:59.603Z",
+  "endedAt": "2026-08-17T17:40:24.214Z",
+  "duration": 251172
+}

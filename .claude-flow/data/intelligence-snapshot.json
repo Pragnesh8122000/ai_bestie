@@ -899,5 +899,517 @@
         "accessCount": 0
       }
     ]
+  },
+  {
+    "timestamp": 1786552270291,
+    "nodes": 23,
+    "edges": 156,
+    "pageRankSum": 1,
+    "confidences": [
+      0.315,
+      0.315,
+      0.315,
+      0.315,
+      0.315,
+      0.35,
+      0.35,
+      0.35,
+      0.35,
+      0.35,
+      0.35,
+      0.35,
+      0.35,
+      0.35,
+      0.35,
+      0.35,
+      0.38,
+      0.38,
+      0.38,
+      0.38,
+      0.38,
+      0.5,
+      0.5
+    ],
+    "accessCounts": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "topPatterns": [
+      {
+        "id": "insight-1786552270288-2hw2",
+        "summary": "Frequently edited: LoginPage.tsx (7x)",
+        "confidence": 0.5,
+        "pageRank": 0.21457253662720965,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1786552270288-m6m4",
+        "summary": "Frequently edited: ChatPage.tsx (3x)",
+        "confidence": 0.5,
+        "pageRank": 0.11598517488307873,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1784443131286-93e7",
+        "summary": "Frequently edited: deployment.md (4x)",
+        "confidence": 0.38,
+        "pageRank": 0.081393106860196,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1784443131286-fb3r",
+        "summary": "Frequently edited: ChatInput.tsx (3x)",
+        "confidence": 0.38,
+        "pageRank": 0.06342319811149949,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1784443131286-ati3",
+        "summary": "Frequently edited: speech.ts (4x)",
+        "confidence": 0.38,
+        "pageRank": 0.05230778957115415,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1783887811566-nr8m",
+        "summary": "Frequently edited: implementation-progress.md (3x)",
+        "confidence": 0.35,
+        "pageRank": 0.06534716709045672,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1784443131286-ie2d",
+        "summary": "Frequently edited: Conversation.ts (3x)",
+        "confidence": 0.38,
+        "pageRank": 0.044707509912083485,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1784443131286-4ui2",
+        "summary": "Frequently edited: app.ts (3x)",
+        "confidence": 0.38,
+        "pageRank": 0.039159860491141604,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1783887811566-i6nc",
+        "summary": "Frequently edited: stack-llm-and-voice.md (7x)",
+        "confidence": 0.35,
+        "pageRank": 0.028225838902807693,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1783883038319-c2xz",
+        "summary": "Frequently edited: conversation.ts (4x)",
+        "confidence": 0.35,
+        "pageRank": 0.025790105717136972,
+        "accessCount": 0
+      }
+    ]
+  },
+  {
+    "timestamp": 1786988424213,
+    "nodes": 23,
+    "edges": 156,
+    "pageRankSum": 1,
+    "confidences": [
+      0.29000000000000004,
+      0.29000000000000004,
+      0.29000000000000004,
+      0.29000000000000004,
+      0.29000000000000004,
+      0.32499999999999996,
+      0.32499999999999996,
+      0.32499999999999996,
+      0.32499999999999996,
+      0.32499999999999996,
+      0.32499999999999996,
+      0.32499999999999996,
+      0.32499999999999996,
+      0.32499999999999996,
+      0.32499999999999996,
+      0.32499999999999996,
+      0.355,
+      0.355,
+      0.355,
+      0.355,
+      0.355,
+      0.475,
+      0.6000000000000001
+    ],
+    "accessCounts": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      2
+    ],
+    "topPatterns": [
+      {
+        "id": "insight-1786552270288-2hw2",
+        "summary": "Frequently edited: LoginPage.tsx (7x)",
+        "confidence": 0.6000000000000001,
+        "pageRank": 0.21457253662720965,
+        "accessCount": 2
+      },
+      {
+        "id": "insight-1786552270288-m6m4",
+        "summary": "Frequently edited: ChatPage.tsx (3x)",
+        "confidence": 0.475,
+        "pageRank": 0.11598517488307873,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1784443131286-93e7",
+        "summary": "Frequently edited: deployment.md (4x)",
+        "confidence": 0.355,
+        "pageRank": 0.081393106860196,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1784443131286-fb3r",
+        "summary": "Frequently edited: ChatInput.tsx (3x)",
+        "confidence": 0.355,
+        "pageRank": 0.06342319811149949,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1784443131286-ati3",
+        "summary": "Frequently edited: speech.ts (4x)",
+        "confidence": 0.355,
+        "pageRank": 0.05230778957115415,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1783887811566-nr8m",
+        "summary": "Frequently edited: implementation-progress.md (3x)",
+        "confidence": 0.32499999999999996,
+        "pageRank": 0.06534716709045672,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1784443131286-ie2d",
+        "summary": "Frequently edited: Conversation.ts (3x)",
+        "confidence": 0.355,
+        "pageRank": 0.044707509912083485,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1784443131286-4ui2",
+        "summary": "Frequently edited: app.ts (3x)",
+        "confidence": 0.355,
+        "pageRank": 0.039159860491141604,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1783887811566-i6nc",
+        "summary": "Frequently edited: stack-llm-and-voice.md (7x)",
+        "confidence": 0.32499999999999996,
+        "pageRank": 0.028225838902807693,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1783883038319-c2xz",
+        "summary": "Frequently edited: conversation.ts (4x)",
+        "confidence": 0.32499999999999996,
+        "pageRank": 0.025790105717136972,
+        "accessCount": 0
+      }
+    ]
+  },
+  {
+    "timestamp": 1787069180064,
+    "nodes": 23,
+    "edges": 156,
+    "pageRankSum": 1,
+    "confidences": [
+      0.28500000000000003,
+      0.28500000000000003,
+      0.28500000000000003,
+      0.28500000000000003,
+      0.28500000000000003,
+      0.32,
+      0.32,
+      0.32,
+      0.32,
+      0.32,
+      0.32,
+      0.32,
+      0.32,
+      0.32,
+      0.32,
+      0.32,
+      0.35,
+      0.35,
+      0.53,
+      0.53,
+      0.53,
+      0.55,
+      0.55
+    ],
+    "accessCounts": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "topPatterns": [
+      {
+        "id": "insight-1786552270288-2hw2",
+        "summary": "Frequently edited: LoginPage.tsx (7x)",
+        "confidence": 0.55,
+        "pageRank": 0.21457253662720965,
+        "accessCount": 1
+      },
+      {
+        "id": "insight-1786552270288-m6m4",
+        "summary": "Frequently edited: ChatPage.tsx (3x)",
+        "confidence": 0.55,
+        "pageRank": 0.11598517488307873,
+        "accessCount": 1
+      },
+      {
+        "id": "insight-1784443131286-93e7",
+        "summary": "Frequently edited: deployment.md (4x)",
+        "confidence": 0.53,
+        "pageRank": 0.081393106860196,
+        "accessCount": 1
+      },
+      {
+        "id": "insight-1784443131286-fb3r",
+        "summary": "Frequently edited: ChatInput.tsx (3x)",
+        "confidence": 0.53,
+        "pageRank": 0.06342319811149949,
+        "accessCount": 1
+      },
+      {
+        "id": "insight-1784443131286-ati3",
+        "summary": "Frequently edited: speech.ts (4x)",
+        "confidence": 0.53,
+        "pageRank": 0.05230778957115415,
+        "accessCount": 1
+      },
+      {
+        "id": "insight-1783887811566-nr8m",
+        "summary": "Frequently edited: implementation-progress.md (3x)",
+        "confidence": 0.32,
+        "pageRank": 0.06534716709045672,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1784443131286-ie2d",
+        "summary": "Frequently edited: Conversation.ts (3x)",
+        "confidence": 0.35,
+        "pageRank": 0.044707509912083485,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1784443131286-4ui2",
+        "summary": "Frequently edited: app.ts (3x)",
+        "confidence": 0.35,
+        "pageRank": 0.039159860491141604,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1783887811566-i6nc",
+        "summary": "Frequently edited: stack-llm-and-voice.md (7x)",
+        "confidence": 0.32,
+        "pageRank": 0.028225838902807693,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1783883038319-c2xz",
+        "summary": "Frequently edited: conversation.ts (4x)",
+        "confidence": 0.32,
+        "pageRank": 0.025790105717136972,
+        "accessCount": 0
+      }
+    ]
+  },
+  {
+    "timestamp": 1787075466871,
+    "nodes": 23,
+    "edges": 156,
+    "pageRankSum": 1,
+    "confidences": [
+      0.28500000000000003,
+      0.28500000000000003,
+      0.28500000000000003,
+      0.28500000000000003,
+      0.28500000000000003,
+      0.32,
+      0.32,
+      0.32,
+      0.32,
+      0.32,
+      0.32,
+      0.32,
+      0.32,
+      0.32,
+      0.32,
+      0.32,
+      0.35,
+      0.35,
+      0.35,
+      0.35,
+      0.35,
+      0.47,
+      0.47
+    ],
+    "accessCounts": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "topPatterns": [
+      {
+        "id": "insight-1786552270288-2hw2",
+        "summary": "Frequently edited: LoginPage.tsx (7x)",
+        "confidence": 0.47,
+        "pageRank": 0.21457253662720965,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1786552270288-m6m4",
+        "summary": "Frequently edited: ChatPage.tsx (3x)",
+        "confidence": 0.47,
+        "pageRank": 0.11598517488307873,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1784443131286-93e7",
+        "summary": "Frequently edited: deployment.md (4x)",
+        "confidence": 0.35,
+        "pageRank": 0.081393106860196,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1784443131286-fb3r",
+        "summary": "Frequently edited: ChatInput.tsx (3x)",
+        "confidence": 0.35,
+        "pageRank": 0.06342319811149949,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1784443131286-ati3",
+        "summary": "Frequently edited: speech.ts (4x)",
+        "confidence": 0.35,
+        "pageRank": 0.05230778957115415,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1783887811566-nr8m",
+        "summary": "Frequently edited: implementation-progress.md (3x)",
+        "confidence": 0.32,
+        "pageRank": 0.06534716709045672,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1784443131286-ie2d",
+        "summary": "Frequently edited: Conversation.ts (3x)",
+        "confidence": 0.35,
+        "pageRank": 0.044707509912083485,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1784443131286-4ui2",
+        "summary": "Frequently edited: app.ts (3x)",
+        "confidence": 0.35,
+        "pageRank": 0.039159860491141604,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1783887811566-i6nc",
+        "summary": "Frequently edited: stack-llm-and-voice.md (7x)",
+        "confidence": 0.32,
+        "pageRank": 0.028225838902807693,
+        "accessCount": 0
+      },
+      {
+        "id": "insight-1783883038319-c2xz",
+        "summary": "Frequently edited: conversation.ts (4x)",
+        "confidence": 0.32,
+        "pageRank": 0.025790105717136972,
+        "accessCount": 0
+      }
+    ]
   }
 ]

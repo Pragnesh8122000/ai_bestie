@@ -1,154 +1,168 @@
 {
   "version": 1,
-  "updatedAt": 1785662914894,
-  "nodeCount": 21,
+  "updatedAt": 1787075466871,
+  "nodeCount": 23,
   "nodes": {
     "mem-MEMORY-ai-bestie---memory-index-0": {
       "id": "mem-MEMORY-ai-bestie---memory-index-0",
       "category": "core",
-      "confidence": 0.53,
-      "accessCount": 1,
+      "confidence": 0.28500000000000003,
+      "accessCount": 0,
       "createdAt": 1783280653531
     },
     "mem-implementation-progress-----0": {
       "id": "mem-implementation-progress-----0",
       "category": "implementation-progress",
-      "confidence": 0.53,
-      "accessCount": 1,
+      "confidence": 0.28500000000000003,
+      "accessCount": 0,
       "createdAt": 1783280653531
     },
     "mem-implementation-progress-completed-milestones-1": {
       "id": "mem-implementation-progress-completed-milestones-1",
       "category": "implementation-progress",
-      "confidence": 0.53,
-      "accessCount": 1,
+      "confidence": 0.365,
+      "accessCount": 2,
       "createdAt": 1783280653531
     },
     "mem-implementation-progress-remaining-milestones-2": {
       "id": "mem-implementation-progress-remaining-milestones-2",
       "category": "implementation-progress",
-      "confidence": 0.53,
-      "accessCount": 1,
+      "confidence": 0.365,
+      "accessCount": 2,
       "createdAt": 1783280653531
     },
     "mem-phase1-spec-locked-----0": {
       "id": "mem-phase1-spec-locked-----0",
       "category": "phase1-spec-locked",
-      "confidence": 0.5,
-      "accessCount": 0,
+      "confidence": 0.365,
+      "accessCount": 2,
       "createdAt": 1783280653531
     },
     "insight-1783883038319-lfqy": {
       "id": "insight-1783883038319-lfqy",
       "category": "insights",
-      "confidence": 0.5,
+      "confidence": 0.32,
       "accessCount": 0,
       "createdAt": 1783883038319
     },
     "insight-1783883038319-ny5a": {
       "id": "insight-1783883038319-ny5a",
       "category": "insights",
-      "confidence": 0.5,
+      "confidence": 0.32,
       "accessCount": 0,
       "createdAt": 1783883038319
     },
     "insight-1783883038319-oqfj": {
       "id": "insight-1783883038319-oqfj",
       "category": "insights",
-      "confidence": 0.5,
-      "accessCount": 0,
+      "confidence": 0.42,
+      "accessCount": 2,
       "createdAt": 1783883038319
     },
     "insight-1783883038319-acva": {
       "id": "insight-1783883038319-acva",
       "category": "insights",
-      "confidence": 0.5,
+      "confidence": 0.32,
       "accessCount": 0,
       "createdAt": 1783883038319
     },
     "insight-1783883038319-zdwo": {
       "id": "insight-1783883038319-zdwo",
       "category": "insights",
-      "confidence": 0.5,
+      "confidence": 0.32,
       "accessCount": 0,
       "createdAt": 1783883038319
     },
     "insight-1783883038319-bgdf": {
       "id": "insight-1783883038319-bgdf",
       "category": "insights",
-      "confidence": 0.5,
+      "confidence": 0.32,
       "accessCount": 0,
       "createdAt": 1783883038319
     },
     "insight-1783883038319-n5u4": {
       "id": "insight-1783883038319-n5u4",
       "category": "insights",
-      "confidence": 0.53,
-      "accessCount": 1,
+      "confidence": 0.32,
+      "accessCount": 0,
       "createdAt": 1783883038319
     },
     "insight-1783883038319-mikz": {
       "id": "insight-1783883038319-mikz",
       "category": "insights",
-      "confidence": 0.5,
+      "confidence": 0.32,
       "accessCount": 0,
       "createdAt": 1783883038319
     },
     "insight-1783883038319-c2xz": {
       "id": "insight-1783883038319-c2xz",
       "category": "insights",
-      "confidence": 0.5,
+      "confidence": 0.32,
       "accessCount": 0,
       "createdAt": 1783883038319
     },
     "insight-1783887811566-i6nc": {
       "id": "insight-1783887811566-i6nc",
       "category": "insights",
-      "confidence": 0.5,
+      "confidence": 0.32,
       "accessCount": 0,
       "createdAt": 1783887811566
     },
     "insight-1783887811566-nr8m": {
       "id": "insight-1783887811566-nr8m",
       "category": "insights",
-      "confidence": 0.53,
-      "accessCount": 1,
+      "confidence": 0.32,
+      "accessCount": 0,
       "createdAt": 1783887811566
     },
     "insight-1784443131286-4ui2": {
       "id": "insight-1784443131286-4ui2",
       "category": "insights",
-      "confidence": 0.53,
-      "accessCount": 1,
+      "confidence": 0.35,
+      "accessCount": 0,
       "createdAt": 1784443131286
     },
     "insight-1784443131286-ie2d": {
       "id": "insight-1784443131286-ie2d",
       "category": "insights",
-      "confidence": 0.53,
-      "accessCount": 1,
+      "confidence": 0.44999999999999996,
+      "accessCount": 2,
       "createdAt": 1784443131286
     },
     "insight-1784443131286-ati3": {
       "id": "insight-1784443131286-ati3",
       "category": "insights",
-      "confidence": 0.56,
-      "accessCount": 2,
+      "confidence": 0.35,
+      "accessCount": 0,
       "createdAt": 1784443131286
     },
     "insight-1784443131286-fb3r": {
       "id": "insight-1784443131286-fb3r",
       "category": "insights",
-      "confidence": 0.53,
-      "accessCount": 1,
+      "confidence": 0.35,
+      "accessCount": 0,
       "createdAt": 1784443131286
     },
     "insight-1784443131286-93e7": {
       "id": "insight-1784443131286-93e7",
       "category": "insights",
-      "confidence": 0.5,
-      "accessCount": 0,
+      "confidence": 0.44999999999999996,
+      "accessCount": 2,
       "createdAt": 1784443131286
+    },
+    "insight-1786552270288-m6m4": {
+      "id": "insight-1786552270288-m6m4",
+      "category": "insights",
+      "confidence": 0.7000000000000002,
+      "accessCount": 5,
+      "createdAt": 1786552270288
+    },
+    "insight-1786552270288-2hw2": {
+      "id": "insight-1786552270288-2hw2",
+      "category": "insights",
+      "confidence": 0.6700000000000002,
+      "accessCount": 4,
+      "createdAt": 1786552270288
     }
   },
   "edges": [
@@ -261,6 +275,18 @@
       "weight": 0.7682926829268293
     },
     {
+      "sourceId": "insight-1783883038319-lfqy",
+      "targetId": "insight-1786552270288-m6m4",
+      "type": "similar",
+      "weight": 0.7529411764705882
+    },
+    {
+      "sourceId": "insight-1783883038319-lfqy",
+      "targetId": "insight-1786552270288-2hw2",
+      "type": "similar",
+      "weight": 0.7441860465116279
+    },
+    {
       "sourceId": "insight-1783883038319-ny5a",
       "targetId": "insight-1783883038319-oqfj",
       "type": "similar",
@@ -345,6 +371,18 @@
       "weight": 0.7682926829268293
     },
     {
+      "sourceId": "insight-1783883038319-ny5a",
+      "targetId": "insight-1786552270288-m6m4",
+      "type": "similar",
+      "weight": 0.7529411764705882
+    },
+    {
+      "sourceId": "insight-1783883038319-ny5a",
+      "targetId": "insight-1786552270288-2hw2",
+      "type": "similar",
+      "weight": 0.7441860465116279
+    },
+    {
       "sourceId": "insight-1783883038319-oqfj",
       "targetId": "insight-1783883038319-acva",
       "type": "similar",
@@ -423,6 +461,18 @@
       "weight": 0.7590361445783133
     },
     {
+      "sourceId": "insight-1783883038319-oqfj",
+      "targetId": "insight-1786552270288-m6m4",
+      "type": "similar",
+      "weight": 0.7857142857142857
+    },
+    {
+      "sourceId": "insight-1783883038319-oqfj",
+      "targetId": "insight-1786552270288-2hw2",
+      "type": "similar",
+      "weight": 0.735632183908046
+    },
+    {
       "sourceId": "insight-1783883038319-acva",
       "targetId": "insight-1783883038319-zdwo",
       "type": "similar",
@@ -495,6 +545,18 @@
       "weight": 0.7682926829268293
     },
     {
+      "sourceId": "insight-1783883038319-acva",
+      "targetId": "insight-1786552270288-m6m4",
+      "type": "similar",
+      "weight": 0.8625
+    },
+    {
+      "sourceId": "insight-1783883038319-acva",
+      "targetId": "insight-1786552270288-2hw2",
+      "type": "similar",
+      "weight": 0.8072289156626506
+    },
+    {
       "sourceId": "insight-1783883038319-zdwo",
       "targetId": "insight-1783883038319-bgdf",
       "type": "similar",
@@ -561,6 +623,18 @@
       "weight": 0.8181818181818182
     },
     {
+      "sourceId": "insight-1783883038319-zdwo",
+      "targetId": "insight-1786552270288-m6m4",
+      "type": "similar",
+      "weight": 0.7777777777777778
+    },
+    {
+      "sourceId": "insight-1783883038319-zdwo",
+      "targetId": "insight-1786552270288-2hw2",
+      "type": "similar",
+      "weight": 0.7682926829268293
+    },
+    {
       "sourceId": "insight-1783883038319-bgdf",
       "targetId": "insight-1783883038319-n5u4",
       "type": "similar",
@@ -621,6 +695,18 @@
       "weight": 0.84
     },
     {
+      "sourceId": "insight-1783883038319-bgdf",
+      "targetId": "insight-1786552270288-m6m4",
+      "type": "similar",
+      "weight": 0.7974683544303798
+    },
+    {
+      "sourceId": "insight-1783883038319-bgdf",
+      "targetId": "insight-1786552270288-2hw2",
+      "type": "similar",
+      "weight": 0.7875
+    },
+    {
       "sourceId": "insight-1783883038319-n5u4",
       "targetId": "insight-1783883038319-mikz",
       "type": "similar",
@@ -675,6 +761,18 @@
       "weight": 0.875
     },
     {
+      "sourceId": "insight-1783883038319-n5u4",
+      "targetId": "insight-1786552270288-m6m4",
+      "type": "similar",
+      "weight": 0.8289473684210527
+    },
+    {
+      "sourceId": "insight-1783883038319-n5u4",
+      "targetId": "insight-1786552270288-2hw2",
+      "type": "similar",
+      "weight": 0.8181818181818182
+    },
+    {
       "sourceId": "insight-1783883038319-mikz",
       "targetId": "insight-1783883038319-c2xz",
       "type": "similar",
@@ -723,6 +821,18 @@
       "weight": 0.7241379310344828
     },
     {
+      "sourceId": "insight-1783883038319-mikz",
+      "targetId": "insight-1786552270288-m6m4",
+      "type": "similar",
+      "weight": 0.7111111111111111
+    },
+    {
+      "sourceId": "insight-1783883038319-mikz",
+      "targetId": "insight-1786552270288-2hw2",
+      "type": "similar",
+      "weight": 0.7032967032967034
+    },
+    {
       "sourceId": "insight-1783883038319-c2xz",
       "targetId": "insight-1783887811566-i6nc",
       "type": "similar",
@@ -765,6 +875,18 @@
       "weight": 0.75
     },
     {
+      "sourceId": "insight-1783883038319-c2xz",
+      "targetId": "insight-1786552270288-m6m4",
+      "type": "similar",
+      "weight": 0.7976190476190477
+    },
+    {
+      "sourceId": "insight-1783883038319-c2xz",
+      "targetId": "insight-1786552270288-2hw2",
+      "type": "similar",
+      "weight": 0.788235294117647
+    },
+    {
       "sourceId": "insight-1783887811566-i6nc",
       "targetId": "insight-1783887811566-nr8m",
       "type": "similar",
@@ -801,6 +923,18 @@
       "weight": 0.5833333333333334
     },
     {
+      "sourceId": "insight-1783887811566-i6nc",
+      "targetId": "insight-1786552270288-m6m4",
+      "type": "similar",
+      "weight": 0.5625
+    },
+    {
+      "sourceId": "insight-1783887811566-i6nc",
+      "targetId": "insight-1786552270288-2hw2",
+      "type": "similar",
+      "weight": 0.5575221238938053
+    },
+    {
       "sourceId": "insight-1783887811566-nr8m",
       "targetId": "insight-1784443131286-4ui2",
       "type": "similar",
@@ -831,6 +965,18 @@
       "weight": 0.5943396226415094
     },
     {
+      "sourceId": "insight-1783887811566-nr8m",
+      "targetId": "insight-1786552270288-m6m4",
+      "type": "similar",
+      "weight": 0.5727272727272728
+    },
+    {
+      "sourceId": "insight-1783887811566-nr8m",
+      "targetId": "insight-1786552270288-2hw2",
+      "type": "similar",
+      "weight": 0.5675675675675675
+    },
+    {
       "sourceId": "insight-1784443131286-4ui2",
       "targetId": "insight-1784443131286-ie2d",
       "type": "similar",
@@ -855,6 +1001,18 @@
       "weight": 0.8289473684210527
     },
     {
+      "sourceId": "insight-1784443131286-4ui2",
+      "targetId": "insight-1786552270288-m6m4",
+      "type": "similar",
+      "weight": 0.810126582278481
+    },
+    {
+      "sourceId": "insight-1784443131286-4ui2",
+      "targetId": "insight-1786552270288-2hw2",
+      "type": "similar",
+      "weight": 0.8
+    },
+    {
       "sourceId": "insight-1784443131286-ie2d",
       "targetId": "insight-1784443131286-ati3",
       "type": "similar",
@@ -873,6 +1031,18 @@
       "weight": 0.7325581395348837
     },
     {
+      "sourceId": "insight-1784443131286-ie2d",
+      "targetId": "insight-1786552270288-m6m4",
+      "type": "similar",
+      "weight": 0.7191011235955056
+    },
+    {
+      "sourceId": "insight-1784443131286-ie2d",
+      "targetId": "insight-1786552270288-2hw2",
+      "type": "similar",
+      "weight": 0.7111111111111111
+    },
+    {
       "sourceId": "insight-1784443131286-ati3",
       "targetId": "insight-1784443131286-fb3r",
       "type": "similar",
@@ -885,33 +1055,77 @@
       "weight": 0.7682926829268293
     },
     {
+      "sourceId": "insight-1784443131286-ati3",
+      "targetId": "insight-1786552270288-m6m4",
+      "type": "similar",
+      "weight": 0.8170731707317073
+    },
+    {
+      "sourceId": "insight-1784443131286-ati3",
+      "targetId": "insight-1786552270288-2hw2",
+      "type": "similar",
+      "weight": 0.8072289156626506
+    },
+    {
       "sourceId": "insight-1784443131286-fb3r",
       "targetId": "insight-1784443131286-93e7",
       "type": "similar",
       "weight": 0.7
+    },
+    {
+      "sourceId": "insight-1784443131286-fb3r",
+      "targetId": "insight-1786552270288-m6m4",
+      "type": "similar",
+      "weight": 0.8045977011494253
+    },
+    {
+      "sourceId": "insight-1784443131286-fb3r",
+      "targetId": "insight-1786552270288-2hw2",
+      "type": "similar",
+      "weight": 0.7752808988764045
+    },
+    {
+      "sourceId": "insight-1784443131286-93e7",
+      "targetId": "insight-1786552270288-m6m4",
+      "type": "similar",
+      "weight": 0.7590361445783133
+    },
+    {
+      "sourceId": "insight-1784443131286-93e7",
+      "targetId": "insight-1786552270288-2hw2",
+      "type": "similar",
+      "weight": 0.75
+    },
+    {
+      "sourceId": "insight-1786552270288-m6m4",
+      "targetId": "insight-1786552270288-2hw2",
+      "type": "similar",
+      "weight": 0.8875
     }
   ],
   "pageRanks": {
-    "mem-MEMORY-ai-bestie---memory-index-0": 0.01753855309550551,
-    "mem-implementation-progress-----0": 0.01753855309550551,
-    "mem-implementation-progress-completed-milestones-1": 0.03244630323086268,
-    "mem-implementation-progress-remaining-milestones-2": 0.04511789411089642,
-    "mem-phase1-spec-locked-----0": 0.01753855309550551,
-    "insight-1783883038319-lfqy": 0.01753855309550551,
-    "insight-1783883038319-ny5a": 0.018532403104529322,
-    "insight-1783883038319-oqfj": 0.019657583308864517,
-    "insight-1783883038319-acva": 0.020942885352474475,
-    "insight-1783883038319-zdwo": 0.02242633820662352,
-    "insight-1783883038319-bgdf": 0.0241592809944004,
-    "insight-1783883038319-n5u4": 0.026212818418840822,
-    "insight-1783883038319-mikz": 0.028688472221362733,
-    "insight-1783883038319-c2xz": 0.031736621522573824,
-    "insight-1783887811566-i6nc": 0.035590354025149144,
-    "insight-1783887811566-nr8m": 0.07898257827436342,
-    "insight-1784443131286-4ui2": 0.0540593923127778,
-    "insight-1784443131286-ie2d": 0.06554702450546279,
-    "insight-1784443131286-ati3": 0.08411869799721394,
-    "insight-1784443131286-fb3r": 0.11986916750957909,
-    "insight-1784443131286-93e7": 0.22175797252200302
+    "mem-MEMORY-ai-bestie---memory-index-0": 0.015605000212153757,
+    "mem-implementation-progress-----0": 0.015605000212153757,
+    "mem-implementation-progress-completed-milestones-1": 0.028869245196922796,
+    "mem-implementation-progress-remaining-milestones-2": 0.040143866486035,
+    "mem-phase1-spec-locked-----0": 0.015605000212153757,
+    "insight-1783883038319-lfqy": 0.015605000212153757,
+    "insight-1783883038319-ny5a": 0.016385249917140174,
+    "insight-1783883038319-oqfj": 0.01725571604225115,
+    "insight-1783883038319-acva": 0.018233539719541635,
+    "insight-1783883038319-zdwo": 0.01934057589500349,
+    "insight-1783883038319-bgdf": 0.020605151944381436,
+    "insight-1783883038319-n5u4": 0.022064683614353472,
+    "insight-1783883038319-mikz": 0.023769682168991307,
+    "insight-1783883038319-c2xz": 0.025790105717136972,
+    "insight-1783887811566-i6nc": 0.028225838902807693,
+    "insight-1783887811566-nr8m": 0.06534716709045672,
+    "insight-1784443131286-4ui2": 0.039159860491141604,
+    "insight-1784443131286-ie2d": 0.044707509912083485,
+    "insight-1784443131286-ati3": 0.05230778957115415,
+    "insight-1784443131286-fb3r": 0.06342319811149949,
+    "insight-1784443131286-93e7": 0.081393106860196,
+    "insight-1786552270288-m6m4": 0.11598517488307873,
+    "insight-1786552270288-2hw2": 0.21457253662720965
   }
 }
