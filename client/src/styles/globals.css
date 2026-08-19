@@ -288,6 +288,193 @@ body {
   100% { opacity: 1; transform: translateY(0); }
 }
 
+/* ──────────────────────────────────────────────────────────────────────
+   Message prose — formatted Markdown inside an assistant turn.
+
+   Scoped to .msg-prose so it can't leak into the rest of the UI. The base
+   reset zeroes every margin (see @layer base), so vertical rhythm here is
+   rebuilt deliberately rather than inherited from the browser.
+   ────────────────────────────────────────────────────────────────────── */
+
+/* Collapse the outer margins so a bubble doesn't gain phantom padding. */
+.msg-prose > :first-child { margin-top: 0; }
+.msg-prose > :last-child { margin-bottom: 0; }
+
+/* Long URLs and unbroken tokens must not widen the transcript column. */
+.msg-prose { overflow-wrap: anywhere; }
+
+.msg-prose p {
+  margin: 0 0 0.75em;
+}
+
+/* Headings stay modest: this is a chat, not a document. h1/h2 sit only
+   slightly above body text so a reply can't shout. */
+.msg-prose h1,
+.msg-prose h2,
+.msg-prose h3,
+.msg-prose h4 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--color-ember-soft);
+  margin: 1.2em 0 0.5em;
+}
+.msg-prose h1 { font-size: 1.3em; }
+.msg-prose h2 { font-size: 1.18em; }
+.msg-prose h3 { font-size: 1.06em; }
+.msg-prose h4 { font-size: 1em; }
+
+.msg-prose ul,
+.msg-prose ol {
+  margin: 0 0 0.75em;
+  padding-left: 1.35em;
+}
+.msg-prose li {
+  margin: 0.3em 0;
+  padding-left: 0.2em;
+}
+/* Ember markers tie lists to the persona's accent colour. */
+.msg-prose ul > li::marker {
+  color: var(--color-ember);
+}
+.msg-prose ol > li::marker {
+  color: var(--color-ember);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+.msg-prose ul { list-style-type: disc; }
+.msg-prose ol { list-style-type: decimal; }
+/* Nested lists tighten up and drop to a hollow marker. */
+.msg-prose li > ul,
+.msg-prose li > ol {
+  margin: 0.3em 0 0.15em;
+}
+.msg-prose li > ul { list-style-type: circle; }
+
+/* GFM task lists: the checkbox replaces the bullet. */
+.msg-prose li:has(> input[type='checkbox']) {
+  list-style: none;
+  margin-left: -1.15em;
+}
+.msg-prose input[type='checkbox'] {
+  margin-right: 0.5em;
+  accent-color: var(--color-ember);
+  vertical-align: middle;
+}
+
+.msg-prose strong {
+  font-weight: 650;
+  color: var(--color-ember-soft);
+}
+.msg-prose em { font-style: italic; }
+.msg-prose del {
+  text-decoration: line-through;
+  color: var(--color-linen-dim);
+}
+
+.msg-prose blockquote {
+  margin: 0.75em 0;
+  padding: 0.15em 0 0.15em 0.9em;
+  border-left: 2px solid var(--color-ember-dim);
+  color: var(--color-linen-dim);
+  font-style: italic;
+}
+
+.msg-prose hr {
+  margin: 1.1em 0;
+  border: 0;
+  border-top: 1px solid var(--color-line);
+}
+
+.msg-link {
+  color: var(--color-ember);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--color-ember-dim);
+  transition: text-decoration-color 150ms ease;
+}
+.msg-link:hover {
+  text-decoration-color: var(--color-ember);
+}
+
+.msg-inline-code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  padding: 0.12em 0.38em;
+  border-radius: 4px;
+  background: var(--color-clay);
+  border: 1px solid var(--color-line);
+  color: var(--color-ember-soft);
+}
+
+/* Fenced code. `min-width: 0` on the wrapper lets the <pre> actually scroll
+   inside a flex parent instead of stretching the bubble. */
+.msg-code {
+  position: relative;
+  margin: 0.75em 0;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.28);
+  min-width: 0;
+}
+.msg-code-lang {
+  position: absolute;
+  top: 0.55em;
+  left: 0.85em;
+  pointer-events: none;
+}
+.msg-code pre {
+  margin: 0;
+  padding: 1.6em 0.9em 0.9em;
+  overflow-x: auto;
+}
+.msg-code pre code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  line-height: 1.55;
+  color: var(--color-linen);
+  white-space: pre;
+}
+
+.msg-table-wrap {
+  margin: 0.75em 0;
+  overflow-x: auto;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+}
+.msg-prose table {
+  border-collapse: collapse;
+  /* Grow to fit the content and let `.msg-table-wrap` scroll, rather than
+     squeezing columns until words break apart on a phone. `min-width: 100%`
+     keeps a narrow table filling the bubble. */
+  width: max-content;
+  min-width: 100%;
+  font-size: 0.92em;
+}
+.msg-prose th,
+.msg-prose td {
+  padding: 0.45em 0.7em;
+  text-align: left;
+  border-bottom: 1px solid var(--color-line);
+  /* Undo the prose-wide `anywhere`: mid-word breaks inside a narrow column
+     turn "Payoff" into "Payof f". Cells scroll instead (see above). */
+  overflow-wrap: normal;
+}
+.msg-prose th {
+  color: var(--color-ember-soft);
+  font-weight: 600;
+  background: rgba(0, 0, 0, 0.2);
+}
+.msg-prose tr:last-child td {
+  border-bottom: 0;
+}
+
+/* The streaming caret trails the text, so it must sit on the last line
+   rather than starting a new block. */
+.msg-prose > .stream-caret {
+  vertical-align: -0.15em;
+}
+
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

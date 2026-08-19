@@ -2,7 +2,8 @@ import { useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { useChatStore } from '../stores/chatStore';
 import { usePersonaStore } from '../stores/personaStore';
-import { getArchetypeDisplayName } from '../utils/persona';
+import { stabilizePartialMarkdown } from '../utils/markdown';
+import MessageContent from './MessageContent';
 import VoiceOrb from './VoiceOrb';
 
 const STATUS_LABEL: Record<'idle' | 'thinking' | 'speaking' | 'listening', string> = {
@@ -125,16 +126,19 @@ export default function ChatWindow() {
                   className={`flex ${isYou ? 'justify-end' : 'justify-start'}`}
                 >
                   {isYou ? (
-                    <div className="max-w-[72%] rounded-[18px] border border-line/40 bg-clay/50 px-4 py-2.5 sm:max-w-[65%]">
+                    <div className="max-w-[85%] rounded-[18px] border border-line/40 bg-clay/50 px-4 py-2.5 sm:max-w-[75%]">
                       <span className="mb-1 block font-mono text-[10px] tracking-[0.12em] text-linen-dim/50">
                         {time || 'you'}
                       </span>
-                      <p className="text-[15px] leading-[1.5] text-linen">
+                      {/* Users type prose, not Markdown — rendering their `*`
+                          as emphasis would silently rewrite what they said.
+                          `whitespace-pre-wrap` keeps their own line breaks. */}
+                      <p className="whitespace-pre-wrap break-words text-[15px] leading-[1.5] text-linen">
                         {msg.content}
                       </p>
                     </div>
                   ) : (
-                    <div className="max-w-[72%] border-l-2 border-ember/60 py-0.5 pl-4 sm:max-w-[65%]">
+                    <div className="min-w-0 max-w-[85%] border-l-2 border-ember/60 py-0.5 pl-4 sm:max-w-[75%]">
                       <div className="mb-1 flex items-baseline gap-2">
                         <span className="font-mono text-[10px] tracking-[0.12em] text-linen-dim/50">
                           {(persona?.name || 'sam').toLowerCase()}
@@ -144,9 +148,7 @@ export default function ChatWindow() {
                           {time || 'now'}
                         </span>
                       </div>
-                      <p className="text-[15px] leading-[1.5] text-linen">
-                        {msg.content}
-                      </p>
+                      <MessageContent content={msg.content} />
                     </div>
                   )}
                 </motion.div>
@@ -161,7 +163,7 @@ export default function ChatWindow() {
                 transition={{ duration: 0.35, ease: 'easeOut' }}
                 className="flex justify-start"
               >
-                <div className="max-w-[72%] border-l-2 border-ember/60 py-0.5 pl-4 sm:max-w-[65%]">
+                <div className="min-w-0 max-w-[85%] border-l-2 border-ember/60 py-0.5 pl-4 sm:max-w-[75%]">
                   <div className="mb-1 flex items-baseline gap-2">
                     <span className="font-mono text-[10px] tracking-[0.12em] text-linen-dim/50">
                       {(persona?.name || 'sam').toLowerCase()}
@@ -172,10 +174,9 @@ export default function ChatWindow() {
                     </span>
                   </div>
                   {streamingContent ? (
-                    <p className="text-[15px] leading-[1.5] text-linen">
-                      {streamingContent}
+                    <MessageContent content={stabilizePartialMarkdown(streamingContent)}>
                       <span className="stream-caret" />
-                    </p>
+                    </MessageContent>
                   ) : (
                     <span className="typing-dots" aria-label="typing">
                       <span />
