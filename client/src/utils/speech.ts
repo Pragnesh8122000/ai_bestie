@@ -261,28 +261,65 @@ export function stopSpeaking(): void {
 }
 
 /**
- * Pump the text queue: fetch+play one chunk at a time, in order. Serialized
- * so sentences never interleave; the store's per-sentence speakChunk calls
- * already stagger fetches across sentences for low first-audio latency.
+ * Pump the text queue: play one chunk at a time, in order, while synthesizing
+ * the *next* one concurrently.
+ *
+ * Playback stays strictly serialized (two sentences must never overlap), but
+ * synthesis no longer waits for playback to finish. Previously this loop was
+ * fully serial — fetch, play, fetch, play — so every sentence boundary stalled
+ * for the whole synthesis time of the next chunk. Measured against the real
+ * Kokoro endpoint that was ~2.2-3.2s of dead air at each full stop.
+ *
+ * Synthesis runs at roughly 0.63x the duration of the audio it produces, so
+ * starting chunk N+1 when chunk N begins playing means it is almost always
+ * ready before chunk N ends, and the gap collapses to the buffer-swap time.
+ *
+ * Prefetch depth is deliberately 1. The server synthesizes under a mutex, so
+ * queuing more requests would not make any single one arrive sooner, and it
+ * would waste CPU on audio that a `stopSpeaking()` is about to discard.
  */
 async function pump(lang: string): Promise<void> {
   if (pumping) return;
   pumping = true;
   const mySession = speechSession;
+  // Synthesis of the chunk after the one currently playing, if any.
+  let prefetch: Promise<QueueItem | null> | null = null;
   try {
     while (mySession === speechSession) {
       const chunk = textQueue.shift();
       if (chunk === undefined) break;
-      const item = await fetchItem(chunk, lang, mySession);
+
+      // Use the in-flight synthesis when it belongs to this chunk, otherwise
+      // synthesize now. The first chunk of a reply always takes this second
+      // path, which is what pins `ttsMode` before any concurrent fetch starts
+      // — the engine choice stays a single, race-free decision.
+      const item = await (prefetch ?? fetchItem(chunk, lang, mySession));
+      prefetch = null;
+
       if (mySession !== speechSession) {
         if (item) cancelItem(item);
         break;
       }
+
+      // Kick off the next synthesis *before* awaiting playback, so the CPU
+      // works on chunk N+1 while chunk N is audible. This is the whole fix.
+      const next = textQueue[0];
+      if (next !== undefined) {
+        prefetch = fetchItem(next, lang, mySession);
+        // A rejected prefetch must not surface as an unhandled rejection while
+        // it sits idle during playback; fetchItem already resolves errors to
+        // null, but a defensive catch keeps that contract local.
+        prefetch = prefetch.catch(() => null);
+      }
+
       if (item) await playItem(item, mySession);
       if (mySession !== speechSession) break;
     }
   } finally {
     pumping = false;
+    // Don't leak the blob URL of audio that was synthesized but never played
+    // (stream aborted, conversation switched, TTS toggled off).
+    if (prefetch) void prefetch.then((i) => i && cancelItem(i));
     if (textQueue.length > 0) {
       // A new chunk arrived during the final await — keep pumping so it isn't
       // stranded (its own pump() call returned early while we were running).

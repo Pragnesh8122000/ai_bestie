@@ -324,3 +324,227 @@ describe('playback serialisation', () => {
     expect(spoken.length).toBe(countAtStop);
   });
 });
+
+/**
+ * The companion used to pause 3-5s at every full stop. The pump was fully
+ * serial (fetch, play, fetch, play), so each sentence boundary stalled for the
+ * whole synthesis time of the next chunk — measured at 2.2-3.2s against the
+ * real Kokoro endpoint.
+ *
+ * Synthesis now overlaps playback. These tests pin that behaviour without
+ * weakening the ordering and cancellation guarantees above.
+ */
+describe('inter-sentence gap', () => {
+  // Each test here drives real timers. Without an explicit teardown the
+  // previous test's queue keeps draining into the *next* test's shared
+  // `spoken` array, so assertions see phantom playbacks.
+  afterEach(async () => {
+    speech?.stopSpeaking?.();
+    await flush(60);
+  });
+
+  /** Audio that plays for `playMs`, and synthesis that takes `synthMs`. */
+  function installTimedTts(synthMs: number, playMs: number) {
+    const events: Array<{ at: number; kind: string; n: number }> = [];
+    const t0 = Date.now();
+    let fetchN = 0;
+    let playN = 0;
+
+    class TimedAudio extends FakeAudio {
+      play() {
+        const n = ++playN;
+        events.push({ at: Date.now() - t0, kind: 'play-start', n });
+        spoken.push({ engine: 'remote', voice: 'kokoro' });
+        setTimeout(() => {
+          events.push({ at: Date.now() - t0, kind: 'play-end', n });
+          this.onended?.();
+        }, playMs);
+        return Promise.resolve();
+      }
+    }
+    (globalThis as any).Audio = TimedAudio;
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const n = ++fetchN;
+        events.push({ at: Date.now() - t0, kind: 'fetch-start', n });
+        await new Promise((r) => setTimeout(r, synthMs));
+        events.push({ at: Date.now() - t0, kind: 'fetch-end', n });
+        return { ok: true, blob: async () => ({ size: 1024 }) };
+      }),
+    );
+    return events;
+  }
+
+  /** Silence between the end of one chunk and the start of the next. */
+  function gaps(events: Array<{ at: number; kind: string; n: number }>): number[] {
+    const out: number[] = [];
+    const starts = events.filter((e) => e.kind === 'play-start');
+    const ends = events.filter((e) => e.kind === 'play-end');
+    for (let i = 0; i < ends.length; i++) {
+      const next = starts.find((s) => s.n === ends[i].n + 1);
+      if (next) out.push(next.at - ends[i].at);
+    }
+    return out;
+  }
+
+  it('synthesizes the next chunk while the current one is playing', async () => {
+    const events = installTimedTts(60, 100);
+    await loadFreshModule();
+
+    speech.beginSpeech();
+    speech.speakChunk('One.');
+    speech.speakChunk('Two.');
+    speech.speakChunk('Three.');
+    await flush(700);
+
+    // The decisive assertion: chunk 2's synthesis begins before chunk 1's
+    // audio ends. Under the old serial pump it began strictly after.
+    const fetch2 = events.find((e) => e.kind === 'fetch-start' && e.n === 2)!;
+    const play1End = events.find((e) => e.kind === 'play-end' && e.n === 1)!;
+    expect(fetch2).toBeDefined();
+    expect(fetch2.at).toBeLessThan(play1End.at);
+  });
+
+  it('leaves almost no silence between sentences when synthesis is faster than playback', async () => {
+    // Mirrors production: synthesis ~0.6x the audio duration.
+    const events = installTimedTts(60, 100);
+    await loadFreshModule();
+
+    speech.beginSpeech();
+    speech.speakChunk('One.');
+    speech.speakChunk('Two.');
+    speech.speakChunk('Three.');
+    await flush(700);
+
+    const g = gaps(events);
+    expect(g.length).toBe(2);
+    // Prefetched audio is already in hand, so the swap is near-instant. The
+    // old behaviour left a full synthesis (60ms here) of dead air.
+    for (const gap of g) expect(gap).toBeLessThan(30);
+  });
+
+  it('still bounds the gap when synthesis is slower than playback', async () => {
+    // Worst case: synthesis outruns the audio it produces. The gap cannot be
+    // zero, but it must be the *overhang* (synth - play), not the full synth.
+    const events = installTimedTts(150, 100);
+    await loadFreshModule();
+
+    speech.beginSpeech();
+    speech.speakChunk('One.');
+    speech.speakChunk('Two.');
+    await flush(900);
+
+    const g = gaps(events);
+    expect(g.length).toBe(1);
+    // Serial would have been ~150ms; overlapped leaves ~50ms.
+    expect(g[0]).toBeLessThan(110);
+  });
+
+  it('keeps sentences in order and non-overlapping while prefetching', async () => {
+    const events = installTimedTts(30, 80);
+    await loadFreshModule();
+
+    speech.beginSpeech();
+    speech.speakChunk('One.');
+    speech.speakChunk('Two.');
+    speech.speakChunk('Three.');
+    speech.speakChunk('Four.');
+    await flush(900);
+
+    const order = events.filter((e) => e.kind.startsWith('play')).map((e) => `${e.kind}:${e.n}`);
+    // Strictly start,end,start,end... — never two overlapping utterances.
+    expect(order).toEqual([
+      'play-start:1', 'play-end:1',
+      'play-start:2', 'play-end:2',
+      'play-start:3', 'play-end:3',
+      'play-start:4', 'play-end:4',
+    ]);
+  });
+
+  it('does not prefetch more than one chunk ahead', async () => {
+    // The server synthesizes under a mutex, so deeper queuing buys nothing and
+    // wastes CPU on audio a stop would discard.
+    const events = installTimedTts(40, 200);
+    await loadFreshModule();
+
+    speech.beginSpeech();
+    speech.speakChunk('One.');
+    speech.speakChunk('Two.');
+    speech.speakChunk('Three.');
+    speech.speakChunk('Four.');
+    await flush(150); // chunk 1 still playing
+
+    const started = events.filter((e) => e.kind === 'fetch-start').length;
+    expect(started).toBeLessThanOrEqual(2);
+  });
+
+  it('discards a prefetched chunk when speech is stopped', async () => {
+    const revoked: string[] = [];
+    installTimedTts(30, 200);
+    await loadFreshModule();
+    // Installed after the module loads so the counter only sees this test.
+    (globalThis as any).URL.revokeObjectURL = (u: string) => revoked.push(u);
+
+    speech.beginSpeech();
+    speech.speakChunk('One.');
+    speech.speakChunk('Two.');
+    await flush(120); // chunk 1 playing, chunk 2 synthesized and waiting
+    const countAtStop = spoken.length;
+    speech.stopSpeaking();
+    await flush(300);
+
+    // The prefetched chunk never plays, and its blob URL is released rather
+    // than leaked for the lifetime of the page.
+    expect(spoken.length).toBe(countAtStop);
+    expect(revoked.length).toBeGreaterThan(0);
+  });
+
+  it('still falls back to one browser voice when the very first chunk fails', async () => {
+    // Prefetch must not let a concurrent request decide the engine: the first
+    // chunk is always synthesized alone, so ttsMode is pinned race-free.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('offline');
+      }),
+    );
+    await loadFreshModule();
+
+    speech.beginSpeech();
+    speech.speakChunk('One.');
+    speech.speakChunk('Two.');
+    speech.speakChunk('Three.');
+    await flush(200);
+
+    expect(spoken.length).toBe(3);
+    expect(new Set(spoken.map((s) => s.engine))).toEqual(new Set(['local']));
+    expect(new Set(spoken.map((s) => s.voice)).size).toBe(1);
+  });
+
+  it('skips a failed middle chunk without switching voices or stalling', async () => {
+    let call = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        call++;
+        await new Promise((r) => setTimeout(r, 20));
+        if (call === 2) throw new Error('network');
+        return { ok: true, blob: async () => ({ size: 1024 }) };
+      }),
+    );
+    await loadFreshModule();
+
+    speech.beginSpeech();
+    speech.speakChunk('One.');
+    speech.speakChunk('Two.');
+    speech.speakChunk('Three.');
+    await flush(400);
+
+    // Two of three play; the failure is silent, not a second voice, and the
+    // queue keeps draining rather than deadlocking on the rejected prefetch.
+    expect(spoken.length).toBe(2);
+    expect(new Set(spoken.map((s) => s.engine))).toEqual(new Set(['remote']));
+  });
+});
