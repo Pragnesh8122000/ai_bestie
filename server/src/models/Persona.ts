@@ -92,7 +92,23 @@ personaSchema.methods.getSystemPrompt = function (): string {
   ].join('\n');
 
   // Layer 2: VOICE (archetype-locked)
-  const voice = config.voiceStyle;
+  //
+  // Formatting is appended to the voice layer rather than the rules layer: it
+  // shapes *how* the character talks, not a safety constraint. The client now
+  // renders Markdown, so without this the model drifts into writing reports —
+  // headings and bullet lists for what should be two warm sentences. Replies
+  // are also spoken aloud, and a wall of bullets reads badly as speech.
+  const formatting = [
+    'FORMATTING: Write like a person talking, not like documentation.',
+    'Default to short conversational paragraphs.',
+    'Use a Markdown list only when you are genuinely enumerating several distinct items, and keep it short.',
+    'Do not use headings unless the reply is genuinely long and has multiple sections; never use one for a short answer.',
+    'Do not bold whole sentences. Emphasis is for the occasional key word.',
+    'Use code formatting only for actual code, commands, or filenames.',
+    'Never open with a heading or a list. Start by responding to what they said.',
+  ].join(' ');
+
+  const voice = `${config.voiceStyle}\n\n${formatting}`;
 
   // Layer 3: BEHAVIORAL RULES (hard constraints)
   const rules = [
