@@ -7,6 +7,7 @@ import {
   setTtsStateListener,
 } from '../utils/speech';
 import { deriveTitle, toPreview, DEFAULT_TITLE } from '../utils/conversation';
+import { takeSpeech } from '../utils/speechText';
 import { usePersonaStore } from './personaStore';
 
 type AvatarState = 'idle' | 'thinking' | 'speaking' | 'listening';
@@ -51,7 +52,9 @@ let streamId = 0;
 // Monotonic id for conversation loads, so a slow GET for conversation A can't
 // overwrite a faster GET for B when the user switches rapidly.
 let loadId = 0;
-// TTS sentence accumulator for the current stream (transient, not reactive).
+// Raw (still-Markdown) text accumulated for TTS during the current stream.
+// Transient, not reactive. `takeSpeech` decides when enough has arrived to
+// speak and strips the syntax before it reaches the voice.
 let ttsSentenceBuffer = '';
 
 const WATCHDOG_MS = 60_000; // abort if no chunk arrives for 60s
@@ -453,36 +456,25 @@ export const useChatStore = create<ChatState>((set, getState) => ({
                 set({ streamingContent: assistantContent });
                 if (getState().ttsEnabled) {
                   ttsSentenceBuffer += event.content;
-                  // Hold for 2 completed sentences before flushing (not 1) so
-                  // the TTS model synthesizes them together and carries
-                  // intonation across the boundary — flushing one sentence
-                  // per request made the neural voice sound choppy, since
-                  // Kokoro resets prosody at the start of every request. Cap
-                  // at ~280 chars so first-audio latency stays low even when
-                  // sentences run long, and don't wait past that even with
-                  // only 1 complete sentence so far.
-                  const sentences = ttsSentenceBuffer.match(/[^.!?…\n]*[.!?…\n]+\s*/g) || [];
-                  if (sentences.length >= 2 || ttsSentenceBuffer.length > 280) {
-                    const take = sentences.length >= 2 ? 2 : sentences.length;
-                    const flushEnd = sentences.slice(0, take).reduce((n, s) => n + s.length, 0);
-                    if (flushEnd > 0) {
-                      speakChunk(ttsSentenceBuffer.slice(0, flushEnd));
-                      ttsSentenceBuffer = ttsSentenceBuffer.slice(flushEnd);
-                    } else if (ttsSentenceBuffer.length > 280) {
-                      // No sentence boundary yet but the buffer is already
-                      // long (e.g. a run-on clause) — flush it as-is so audio
-                      // still starts promptly.
-                      speakChunk(ttsSentenceBuffer);
-                      ttsSentenceBuffer = '';
-                    }
+                  // `takeSpeech` holds until ~2 complete utterances have
+                  // arrived (so the neural voice carries intonation across the
+                  // boundary instead of resetting prosody every sentence),
+                  // keeps constructs like fenced blocks whole, and strips the
+                  // Markdown so the voice speaks words rather than asterisks.
+                  const { speech, rest } = takeSpeech(ttsSentenceBuffer);
+                  if (speech) {
+                    speakChunk(speech);
+                    ttsSentenceBuffer = rest;
                   }
                 }
                 break;
 
               case 'done': {
-                // Flush any remaining buffered text.
+                // Flush any remaining buffered text, including a trailing
+                // fragment with no sentence end.
                 if (ttsSentenceBuffer.trim()) {
-                  speakChunk(ttsSentenceBuffer);
+                  const { speech } = takeSpeech(ttsSentenceBuffer, true);
+                  if (speech) speakChunk(speech);
                   ttsSentenceBuffer = '';
                 }
                 const assistantMessage: Message = {
