@@ -23,13 +23,22 @@ router.use(requireAuth);
 router.get(
   '/',
   catchAsync(async (req, res) => {
-    const querySchema = z.object({
-      limit: z.coerce.number().int().min(1).max(50).optional(),
-      before: z.coerce.date().optional(),
-    });
+    const querySchema = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(50).optional(),
+        before: z.coerce.date().optional(),
+        beforeId: objectIdSchema.optional(),
+      })
+      .refine((value) => !value.beforeId || Boolean(value.before), {
+        message: 'beforeId requires before',
+      });
 
-    const { limit, before } = querySchema.parse(req.query);
-    const { conversations, hasMore } = await listConversations(req.userId!, { limit, before });
+    const { limit, before, beforeId } = querySchema.parse(req.query);
+    const { conversations, hasMore } = await listConversations(req.userId!, {
+      limit,
+      before,
+      beforeId,
+    });
 
     res.json({ success: true, data: { conversations, hasMore } });
   }),

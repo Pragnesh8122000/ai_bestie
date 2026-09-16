@@ -22,7 +22,7 @@ const pkg = `sherpa-onnx-${process.platform}-${process.arch}`;
 // npm workspaces may hoist platform deps to the repo root or keep them under
 // the workspace; check both.
 const candidates = [
-  path.resolve(__dirname, 'node_modules', pkg),
+  path.resolve(__dirname, '../../node_modules', pkg),
   path.resolve(__dirname, '..', 'node_modules', pkg),
 ];
 const libDir = candidates.find((p) => fs.existsSync(p));
@@ -39,8 +39,13 @@ if (cmd.length === 0) {
   process.exit(2);
 }
 
-const child = spawn(cmd[0], cmd.slice(1), { stdio: 'inherit', env, shell: true });
+const child = spawn(cmd[0], cmd.slice(1), { stdio: 'inherit', env, shell: false });
+for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => child.kill(signal));
+child.on('error', (error) => {
+  console.error(`with-tts-env: ${error.message}`);
+  process.exit(1);
+});
 child.on('exit', (code, signal) => {
-  if (signal) process.kill(process.pid, signal);
+  if (signal) process.exit(signal === 'SIGINT' ? 130 : 143);
   else process.exit(code ?? 0);
 });

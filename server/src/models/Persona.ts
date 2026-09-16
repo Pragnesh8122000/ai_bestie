@@ -92,7 +92,23 @@ personaSchema.methods.getSystemPrompt = function (): string {
   ].join('\n');
 
   // Layer 2: VOICE (archetype-locked)
-  const voice = config.voiceStyle;
+  //
+  // Formatting is appended to the voice layer rather than the rules layer: it
+  // shapes *how* the character talks, not a safety constraint. The client now
+  // renders Markdown, so without this the model drifts into writing reports —
+  // headings and bullet lists for what should be two warm sentences. Replies
+  // are also spoken aloud, and a wall of bullets reads badly as speech.
+  const formatting = [
+    'FORMATTING: Write like a person talking, not like documentation.',
+    'Default to short conversational paragraphs.',
+    'Use a Markdown list only when you are genuinely enumerating several distinct items, and keep it short.',
+    'Do not use headings unless the reply is genuinely long and has multiple sections; never use one for a short answer.',
+    'Do not bold whole sentences. Emphasis is for the occasional key word.',
+    'Use code formatting only for actual code, commands, or filenames.',
+    'Never open with a heading or a list. Start by responding to what they said.',
+  ].join(' ');
+
+  const voice = `${config.voiceStyle}\n\n${formatting}`;
 
   // Layer 3: BEHAVIORAL RULES (hard constraints)
   const rules = [
@@ -143,34 +159,33 @@ function getTraitDescriptor(
 ): string {
   const descriptions: Record<string, Record<string, string>> = {
     directness: {
-      low: "Be gentle and indirect. Soften feedback. Use cushioning language.",
-      mid: "Be balanced. Give honest feedback with warmth.",
+      low: 'Be gentle and indirect. Soften feedback. Use cushioning language.',
+      mid: 'Be balanced. Give honest feedback with warmth.',
       high: "Be straightforward and direct. Don't soften feedback, but maintain respect.",
     },
     warmth: {
-      low: "Be reserved and matter-of-fact. Focus on information over emotion.",
-      mid: "Show genuine care. Use affirming language when appropriate.",
-      high: "Be warmly expressive. Show empathy and emotional attunement openly.",
+      low: 'Be reserved and matter-of-fact. Focus on information over emotion.',
+      mid: 'Show genuine care. Use affirming language when appropriate.',
+      high: 'Be warmly expressive. Show empathy and emotional attunement openly.',
     },
     proactivity: {
-      low: "Be reactive. Wait for the user to ask before offering suggestions.",
-      mid: "Offer suggestions when relevant, but ask first.",
+      low: 'Be reactive. Wait for the user to ask before offering suggestions.',
+      mid: 'Offer suggestions when relevant, but ask first.',
       high: "Be proactive. Offer solutions and suggestions readily. Don't just ask questions.",
     },
     depth: {
-      low: "Keep responses surface-level. Brief and practical.",
-      mid: "Go beyond surface advice. Explore root causes when relevant.",
-      high: "Dive deep. Explore root causes, philosophical underpinnings, and systemic patterns.",
+      low: 'Keep responses surface-level. Brief and practical.',
+      mid: 'Go beyond surface advice. Explore root causes when relevant.',
+      high: 'Dive deep. Explore root causes, philosophical underpinnings, and systemic patterns.',
     },
     accountability: {
       low: "Be supportive and validating. Don't push or challenge.",
-      mid: "Gently challenge. Follow up on commitments. Balance support with accountability.",
-      high: "Hold the user accountable. Challenge excuses. Follow up on commitments firmly.",
+      mid: 'Gently challenge. Follow up on commitments. Balance support with accountability.',
+      high: 'Hold the user accountable. Challenge excuses. Follow up on commitments firmly.',
     },
   };
 
   const desc = descriptions[key] || {};
-  const midPoint = (range.min + range.max) / 2;
   const midRange = (range.max - range.min) / 3;
 
   if (value <= range.min + midRange) return desc.low || '';

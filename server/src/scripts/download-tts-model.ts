@@ -19,12 +19,9 @@
 import { createWriteStream, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import fs from 'node:fs';
 
 const MODEL_NAME =
-  process.env.TTS_MODEL_VERSION?.trim() === 'v0_19'
-    ? 'kokoro-en-v0_19'
-    : 'kokoro-multi-lang-v1_0';
+  process.env.TTS_MODEL_VERSION?.trim() === 'v0_19' ? 'kokoro-en-v0_19' : 'kokoro-multi-lang-v1_0';
 const ARCHIVE_NAME = `${MODEL_NAME}.tar.bz2`;
 const URL = `https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/${ARCHIVE_NAME}`;
 

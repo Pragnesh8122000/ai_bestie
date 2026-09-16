@@ -1,13 +1,9 @@
 import { create } from 'zustand';
 import { conversationApi, Conversation, Message } from '../api/conversation';
-import {
-  speakChunk,
-  beginSpeech,
-  stopSpeaking,
-  setTtsStateListener,
-} from '../utils/speech';
+import { speakChunk, beginSpeech, stopSpeaking, setTtsStateListener } from '../utils/speech';
 import { deriveTitle, toPreview, DEFAULT_TITLE } from '../utils/conversation';
-import { usePersonaStore } from './personaStore';
+import { takeSpeech } from '../utils/speechText';
+import { usePersonaStore, resetPersonaSession } from './personaStore';
 
 type AvatarState = 'idle' | 'thinking' | 'speaking' | 'listening';
 
@@ -51,7 +47,10 @@ let streamId = 0;
 // Monotonic id for conversation loads, so a slow GET for conversation A can't
 // overwrite a faster GET for B when the user switches rapidly.
 let loadId = 0;
-// TTS sentence accumulator for the current stream (transient, not reactive).
+let sessionId = 0;
+// Raw (still-Markdown) text accumulated for TTS during the current stream.
+// Transient, not reactive. `takeSpeech` decides when enough has arrived to
+// speak and strips the syntax before it reaches the voice.
 let ttsSentenceBuffer = '';
 
 const WATCHDOG_MS = 60_000; // abort if no chunk arrives for 60s
@@ -89,6 +88,7 @@ export const useChatStore = create<ChatState>((set, getState) => ({
   ttsEnabled: false,
 
   fetchConversations: async ({ append = false } = {}) => {
+    const mySession = sessionId;
     const { conversations, isLoadingList } = getState();
     if (isLoadingList) return; // guard double-fire (StrictMode, rapid clicks)
 
@@ -98,25 +98,33 @@ export const useChatStore = create<ChatState>((set, getState) => ({
 
     set({ isLoadingList: true });
     try {
-      const response = await conversationApi.list(before ? { before } : undefined);
+      const response = await conversationApi.list(
+        before ? { before, beforeId: conversations[conversations.length - 1].id } : undefined,
+      );
+      if (mySession !== sessionId) return;
       const { conversations: page, hasMore } = response.data.data;
 
       set((state) => {
-        if (!append) return { conversations: page, hasMoreConversations: hasMore, isLoadingList: false };
+        if (!append)
+          return { conversations: page, hasMoreConversations: hasMore, isLoadingList: false };
         // De-dupe on id: a conversation bumped between pages can appear twice.
         const seen = new Set(state.conversations.map((c) => c.id));
         const merged = [...state.conversations, ...page.filter((c) => !seen.has(c.id))];
         return { conversations: merged, hasMoreConversations: hasMore, isLoadingList: false };
       });
     } catch (error: any) {
-      set({ error: errorMessage(error, 'Failed to load conversations'), isLoadingList: false });
+      if (mySession === sessionId)
+        set({ error: errorMessage(error, 'Failed to load conversations'), isLoadingList: false });
     }
   },
 
   openDefaultConversation: async () => {
+    if (getState().isLoadingConversation) return;
+    const myLoadId = ++loadId;
     set({ isLoadingConversation: true });
     try {
       const response = await conversationApi.getDefault();
+      if (myLoadId !== loadId) return;
       const { conversation, persona } = response.data.data;
       usePersonaStore.getState().upsertPersona(persona);
       set((state) => ({
@@ -128,6 +136,7 @@ export const useChatStore = create<ChatState>((set, getState) => ({
           : sortByRecency([conversation, ...state.conversations]),
       }));
     } catch (error: any) {
+      if (myLoadId !== loadId) return;
       set({
         error: errorMessage(error, 'Failed to start conversation'),
         isLoadingConversation: false,
@@ -136,12 +145,7 @@ export const useChatStore = create<ChatState>((set, getState) => ({
   },
 
   openConversation: async (id: string) => {
-    try {
-      const response = await conversationApi.get(id);
-      set({ activeConversation: response.data.data.conversation, activeConversationId: id });
-    } catch (error: any) {
-      set({ error: errorMessage(error, 'Failed to load conversation') });
-    }
+    await getState().switchConversation(id);
   },
 
   /**
@@ -198,15 +202,18 @@ export const useChatStore = create<ChatState>((set, getState) => ({
   },
 
   createConversation: async (personaId: string, avatarId: string, title?: string) => {
+    const mySession = sessionId;
     try {
       const response = await conversationApi.create({ personaId, avatarId, title });
       const conversation = response.data.data.conversation;
+      if (mySession !== sessionId) return conversation.id;
       set((state) => ({
         conversations: [conversation, ...state.conversations],
       }));
       return conversation.id;
     } catch (error: any) {
-      set({ error: errorMessage(error, 'Failed to create conversation') });
+      if (mySession === sessionId)
+        set({ error: errorMessage(error, 'Failed to create conversation') });
       throw error;
     }
   },
@@ -216,14 +223,17 @@ export const useChatStore = create<ChatState>((set, getState) => ({
    * No GET round-trip — a freshly created conversation is known to be empty.
    */
   startNewConversation: async () => {
-    let persona = usePersonaStore
-      .getState()
-      .personas.find((p) => p.id === usePersonaStore.getState().activePersonaId)
-      ?? usePersonaStore.getState().personas[0];
+    const mySession = sessionId;
+    let persona =
+      usePersonaStore
+        .getState()
+        .personas.find((p) => p.id === usePersonaStore.getState().activePersonaId) ??
+      usePersonaStore.getState().personas[0];
 
     // Cold load (hard refresh straight onto a "new chat" click) — seed a persona.
     if (!persona) {
       await getState().openDefaultConversation();
+      if (mySession !== sessionId) return null;
       persona = usePersonaStore.getState().personas[0];
       if (!persona) {
         set({ error: 'Could not start a new chat. Please reload.' });
@@ -232,6 +242,8 @@ export const useChatStore = create<ChatState>((set, getState) => ({
     }
 
     getState().abortStream();
+    const myLoadId = ++loadId;
+    set({ isLoadingConversation: true });
 
     try {
       const response = await conversationApi.create({
@@ -239,9 +251,13 @@ export const useChatStore = create<ChatState>((set, getState) => ({
         avatarId: persona.avatarId,
       });
       const conversation = response.data.data.conversation;
+      if (mySession !== sessionId) return null;
+      if (myLoadId !== loadId) {
+        set((state) => ({ conversations: sortByRecency([conversation, ...state.conversations]) }));
+        return conversation.id;
+      }
       const active: ActiveConversation = { ...conversation, messages: conversation.messages ?? [] };
 
-      ++loadId; // invalidate any conversation GET still in flight
       set((state) => ({
         conversations: [conversation, ...state.conversations],
         activeConversation: active,
@@ -256,17 +272,24 @@ export const useChatStore = create<ChatState>((set, getState) => ({
 
       return conversation.id;
     } catch (error: any) {
-      set({ error: errorMessage(error, 'Failed to start a new chat') });
+      if (mySession === sessionId && myLoadId === loadId) {
+        set({
+          error: errorMessage(error, 'Failed to start a new chat'),
+          isLoadingConversation: false,
+        });
+      }
       return null;
     }
   },
 
   /** Optimistic rename — reverts the title if the server rejects it. */
   renameConversation: async (id: string, title: string) => {
+    const mySession = sessionId;
     const trimmed = title.trim();
     if (!trimmed) return;
 
-    const previous = getState().conversations.find((c) => c.id === id)?.title;
+    const previousConversation = getState().conversations.find((c) => c.id === id);
+    const previous = previousConversation?.title;
     if (previous === trimmed) return;
 
     const apply = (value: string, isCustom: boolean) =>
@@ -285,12 +308,20 @@ export const useChatStore = create<ChatState>((set, getState) => ({
     try {
       await conversationApi.rename(id, trimmed);
     } catch (error: any) {
-      if (previous !== undefined) apply(previous, false);
+      if (mySession !== sessionId) return;
+      // A later rename owns the title now; don't roll it back.
+      if (
+        previous !== undefined &&
+        getState().conversations.find((c) => c.id === id)?.title === trimmed
+      ) {
+        apply(previous, Boolean(previousConversation?.titleIsCustom));
+      }
       set({ error: errorMessage(error, 'Failed to rename conversation') });
     }
   },
 
   deleteConversation: async (id: string) => {
+    const mySession = sessionId;
     const { activeConversationId } = getState();
     const wasActive = activeConversationId === id;
 
@@ -300,16 +331,18 @@ export const useChatStore = create<ChatState>((set, getState) => ({
       await conversationApi.delete(id);
     } catch (error: any) {
       // 404 means it's already gone — the desired end state either way.
+      if (mySession !== sessionId) return;
       if (error?.response?.status !== 404) {
         set({ error: errorMessage(error, 'Failed to delete conversation') });
         return;
       }
     }
 
+    if (mySession !== sessionId) return;
     const remaining = getState().conversations.filter((c) => c.id !== id);
     set({ conversations: remaining });
 
-    if (!wasActive) return;
+    if (!wasActive || getState().activeConversationId !== id) return;
 
     // Move to the next most recent conversation, or seed a fresh one.
     const next = remaining[0];
@@ -324,17 +357,20 @@ export const useChatStore = create<ChatState>((set, getState) => ({
   setSidebarOpen: (open: boolean) => set({ isSidebarOpen: open }),
 
   abortStream: () => {
+    ++streamId;
     if (currentController) {
       currentController.abort();
       currentController = null;
     }
     clearWatchdog();
+    ttsSentenceBuffer = '';
+    set({ isStreaming: false, streamingContent: '', avatarState: 'idle' });
     stopSpeaking();
   },
 
   sendMessage: async (content: string) => {
     const { activeConversation, isStreaming } = getState();
-    if (!activeConversation || !content.trim()) return;
+    if (!activeConversation || getState().isLoadingConversation || !content.trim()) return;
 
     // Pin the conversation this stream belongs to — the user may switch away
     // mid-reply, and none of the callbacks below may touch the new one.
@@ -394,6 +430,8 @@ export const useChatStore = create<ChatState>((set, getState) => ({
         // Connection stalled — abort and surface a friendly error.
         if (myStreamId !== streamId) return;
         controller.abort();
+        stopSpeaking();
+        ttsSentenceBuffer = '';
         set({
           error: 'Connection stalled. Please try again.',
           avatarState: 'idle',
@@ -406,9 +444,15 @@ export const useChatStore = create<ChatState>((set, getState) => ({
 
     try {
       const response = await conversationApi.streamMessage(convId, content, controller.signal);
+      if (myStreamId !== streamId || controller.signal.aborted) {
+        await response.body?.cancel();
+        return;
+      }
 
       if (!response.ok) {
-        throw new Error('Stream request failed');
+        if (response.status === 401) window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.message || 'Failed to send message. Please try again.');
       }
 
       const reader = response.body?.getReader();
@@ -417,72 +461,77 @@ export const useChatStore = create<ChatState>((set, getState) => ({
       const decoder = new TextDecoder();
       let assistantContent = '';
       let buffer = '';
+      let completed = false;
 
-      while (true) {
-        if (myStreamId !== streamId) break; // a newer stream superseded this one
-        const { done, value } = await reader.read();
-        if (done) break;
+      try {
+        while (!completed) {
+          if (myStreamId !== streamId || controller.signal.aborted) return;
+          const { done, value } = await reader.read();
+          if (myStreamId !== streamId || controller.signal.aborted) return;
+          if (done) throw new Error('Reply interrupted. Please try again.');
 
-        resetWatchdog();
+          resetWatchdog();
 
-        buffer += decoder.decode(value, { stream: true });
+          buffer += decoder.decode(value, { stream: true });
 
-        // Parse SSE lines
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+          // Parse SSE lines
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; // Keep incomplete line in buffer
 
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const data = line.slice(6).trim();
-          if (!data || data.startsWith(':')) continue;
+          for (const line of lines) {
+            if (!line.startsWith('data:')) continue;
+            const data = line.slice(5).trim();
+            if (!data) continue;
 
-          try {
-            const event = JSON.parse(data);
+            let event;
+            try {
+              event = JSON.parse(data);
+            } catch {
+              throw new Error('Reply interrupted by invalid stream data. Please try again.');
+            }
+            if (!event || typeof event.type !== 'string')
+              throw new Error('Invalid reply stream. Please try again.');
 
             switch (event.type) {
               case 'state':
                 // When TTS is on, the orb's speaking state is driven by actual
                 // audio start/stop (see setTtsStateListener below), not the
                 // server's advisory state event.
-                if (event.state === 'speaking' && getState().ttsEnabled) break;
+                if (getState().ttsEnabled && ['speaking', 'idle'].includes(event.state)) break;
+                if (!['idle', 'thinking', 'speaking', 'listening'].includes(event.state)) {
+                  throw new Error('Invalid reply state. Please try again.');
+                }
                 set({ avatarState: event.state });
                 break;
 
               case 'token':
+                if (typeof event.content !== 'string')
+                  throw new Error('Invalid reply content. Please try again.');
                 assistantContent += event.content;
                 set({ streamingContent: assistantContent });
                 if (getState().ttsEnabled) {
                   ttsSentenceBuffer += event.content;
-                  // Hold for 2 completed sentences before flushing (not 1) so
-                  // the TTS model synthesizes them together and carries
-                  // intonation across the boundary — flushing one sentence
-                  // per request made the neural voice sound choppy, since
-                  // Kokoro resets prosody at the start of every request. Cap
-                  // at ~280 chars so first-audio latency stays low even when
-                  // sentences run long, and don't wait past that even with
-                  // only 1 complete sentence so far.
-                  const sentences = ttsSentenceBuffer.match(/[^.!?…\n]*[.!?…\n]+\s*/g) || [];
-                  if (sentences.length >= 2 || ttsSentenceBuffer.length > 280) {
-                    const take = sentences.length >= 2 ? 2 : sentences.length;
-                    const flushEnd = sentences.slice(0, take).reduce((n, s) => n + s.length, 0);
-                    if (flushEnd > 0) {
-                      speakChunk(ttsSentenceBuffer.slice(0, flushEnd));
-                      ttsSentenceBuffer = ttsSentenceBuffer.slice(flushEnd);
-                    } else if (ttsSentenceBuffer.length > 280) {
-                      // No sentence boundary yet but the buffer is already
-                      // long (e.g. a run-on clause) — flush it as-is so audio
-                      // still starts promptly.
-                      speakChunk(ttsSentenceBuffer);
-                      ttsSentenceBuffer = '';
-                    }
+                  // `takeSpeech` holds until ~2 complete utterances have
+                  // arrived (so the neural voice carries intonation across the
+                  // boundary instead of resetting prosody every sentence),
+                  // keeps constructs like fenced blocks whole, and strips the
+                  // Markdown so the voice speaks words rather than asterisks.
+                  const { speech, rest } = takeSpeech(ttsSentenceBuffer);
+                  if (speech) {
+                    speakChunk(speech);
+                    ttsSentenceBuffer = rest;
                   }
                 }
                 break;
 
               case 'done': {
-                // Flush any remaining buffered text.
-                if (ttsSentenceBuffer.trim()) {
-                  speakChunk(ttsSentenceBuffer);
+                completed = true;
+                clearWatchdog();
+                // Flush any remaining buffered text, including a trailing
+                // fragment with no sentence end.
+                if (getState().ttsEnabled && ttsSentenceBuffer.trim()) {
+                  const { speech } = takeSpeech(ttsSentenceBuffer, true);
+                  if (speech) speakChunk(speech);
                   ttsSentenceBuffer = '';
                 }
                 const assistantMessage: Message = {
@@ -531,22 +580,20 @@ export const useChatStore = create<ChatState>((set, getState) => ({
               }
 
               case 'error':
-                set({
-                  error: event.message || 'Stream error',
-                  avatarState: 'idle',
-                  isStreaming: false,
-                  streamingContent: '',
-                });
-                break;
+                throw new Error(event.message || 'Stream error');
             }
-          } catch {
-            // Skip unparseable lines
+            if (completed) break;
           }
         }
+      } finally {
+        await reader.cancel().catch(() => {});
+        reader.releaseLock();
       }
     } catch (error: any) {
       // Stale stream — a newer stream superseded this one; don't touch state.
       if (myStreamId !== streamId) return;
+      stopSpeaking();
+      ttsSentenceBuffer = '';
       const wasAborted = error?.name === 'AbortError';
       if (wasAborted) {
         // Aborted by us (stalled / navigated / switched / new message). The
@@ -562,6 +609,45 @@ export const useChatStore = create<ChatState>((set, getState) => ({
           streamingContent: '',
         });
       }
+      clearWatchdog();
+      // A failed request may have saved the user message before upstream
+      // failed, or may have been rejected before writing anything. Reconcile
+      // from the server instead of retaining a ghost optimistic message.
+      const recoveryLoadId = loadId;
+      const recoveryTitle = getState().activeConversation?.title;
+      try {
+        const response = await conversationApi.get(convId);
+        if (myStreamId !== streamId || recoveryLoadId !== loadId) return;
+        const saved = response.data.data.conversation;
+        if (getState().activeConversation?.id !== convId) return;
+        set((state) => {
+          const titleChanged = state.activeConversation?.title !== recoveryTitle;
+          const titleFields = titleChanged
+            ? {
+                title: state.activeConversation!.title,
+                titleIsCustom: state.activeConversation!.titleIsCustom,
+              }
+            : { title: saved.title, titleIsCustom: saved.titleIsCustom };
+          return {
+            activeConversation: { ...saved, ...titleFields },
+            conversations: sortByRecency(
+              state.conversations.map((c) =>
+                c.id === convId
+                  ? {
+                      ...c,
+                      ...titleFields,
+                      messageCount: saved.messageCount,
+                      lastMessageAt: saved.lastMessageAt,
+                      lastMessagePreview: saved.lastMessagePreview,
+                    }
+                  : c,
+              ),
+            ),
+          };
+        });
+      } catch {
+        // Offline recovery must not hide the original reply failure.
+      }
     } finally {
       if (myStreamId === streamId) {
         clearWatchdog();
@@ -573,15 +659,33 @@ export const useChatStore = create<ChatState>((set, getState) => ({
   clearError: () => set({ error: null }),
 
   toggleTts: () => {
-    set((state) => {
-      const next = !state.ttsEnabled;
-      if (!next) stopSpeaking();
-      return { ttsEnabled: next };
-    });
+    const next = !getState().ttsEnabled;
+    ttsSentenceBuffer = '';
+    set({ ttsEnabled: next });
+    if (!next) stopSpeaking();
   },
 }));
 
 export { DEFAULT_TITLE };
+
+/** Clear user-owned data and invalidate outstanding work at auth boundaries. */
+export function resetChatSession(): void {
+  ++sessionId;
+  ++loadId;
+  useChatStore.getState().abortStream();
+  useChatStore.setState({
+    conversations: [],
+    activeConversation: null,
+    activeConversationId: null,
+    isLoadingList: false,
+    isLoadingConversation: false,
+    hasMoreConversations: false,
+    isSidebarOpen: false,
+    error: null,
+    ttsEnabled: false,
+  });
+  resetPersonaSession();
+}
 
 // Drive the orb's speaking state from actual audio start/stop when TTS is on.
 // Fires true when the first utterance begins, false when the queue drains.
@@ -589,7 +693,15 @@ setTtsStateListener((speaking) => {
   const state = useChatStore.getState();
   if (speaking) {
     useChatStore.setState({ avatarState: 'speaking' });
-  } else if (!state.isStreaming) {
-    useChatStore.setState({ avatarState: 'idle' });
+  } else {
+    useChatStore.setState({ avatarState: state.isStreaming ? 'thinking' : 'idle' });
   }
 });
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('speech:error', () => {
+    useChatStore.setState({
+      error: 'Some voice audio could not be played. The full reply is available in chat.',
+    });
+  });
+}

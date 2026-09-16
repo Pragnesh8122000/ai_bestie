@@ -10,7 +10,8 @@
     "test": "vitest run",
     "seed": "tsx src/seed.ts",
     "download-tts-model": "tsx src/scripts/download-tts-model.ts",
-    "verify-voice": "tsx src/scripts/verify-voice.mts"
+    "verify-voice": "tsx src/scripts/verify-voice.mts",
+    "verify-readiness": "tsx src/scripts/verify-readiness.mts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -37,6 +38,6 @@
     "@types/passport-local": "^1.0.38",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
-    "vitest": "^3.2.3"
+    "vitest": "^4.1.11"
   }
 }

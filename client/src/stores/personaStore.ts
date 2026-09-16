@@ -1,5 +1,11 @@
 import { create } from 'zustand';
-import { personaApi, Persona, Archetype, CreatePersonaInput, UpdatePersonaInput } from '../api/persona';
+import {
+  personaApi,
+  Persona,
+  Archetype,
+  CreatePersonaInput,
+  UpdatePersonaInput,
+} from '../api/persona';
 
 interface PersonaState {
   personas: Persona[];
@@ -18,6 +24,8 @@ interface PersonaState {
   clearError: () => void;
 }
 
+let personaSessionId = 0;
+
 export const usePersonaStore = create<PersonaState>((set) => ({
   personas: [],
   activePersonaId: null,
@@ -35,9 +43,11 @@ export const usePersonaStore = create<PersonaState>((set) => ({
   },
 
   fetchPersonas: async () => {
+    const session = personaSessionId;
     try {
       set({ isLoading: true, error: null });
       const response = await personaApi.list();
+      if (session !== personaSessionId) return;
       const personas = response.data.data.personas;
       set((state) => ({
         personas,
@@ -45,15 +55,18 @@ export const usePersonaStore = create<PersonaState>((set) => ({
         activePersonaId: state.activePersonaId || personas[0]?.id || null,
       }));
     } catch (error: any) {
+      if (session !== personaSessionId) return;
       set({ error: error.response?.data?.message || 'Failed to fetch personas', isLoading: false });
     }
   },
 
   createPersona: async (data: CreatePersonaInput) => {
+    const session = personaSessionId;
     try {
       set({ isLoading: true, error: null });
       const response = await personaApi.create(data);
       const persona = response.data.data.persona;
+      if (session !== personaSessionId) return persona;
       set((state) => ({
         personas: [...state.personas, persona],
         activePersonaId: persona.id,
@@ -61,36 +74,44 @@ export const usePersonaStore = create<PersonaState>((set) => ({
       }));
       return persona;
     } catch (error: any) {
+      if (session !== personaSessionId) throw error;
       set({ error: error.response?.data?.message || 'Failed to create persona', isLoading: false });
       throw error;
     }
   },
 
   updatePersona: async (id: string, data: UpdatePersonaInput) => {
+    const session = personaSessionId;
     try {
       set({ error: null });
       const response = await personaApi.update(id, data);
       const updated = response.data.data.persona;
+      if (session !== personaSessionId) return updated;
       set((state) => ({
         personas: state.personas.map((p) => (p.id === id ? updated : p)),
       }));
       return updated;
     } catch (error: any) {
+      if (session !== personaSessionId) throw error;
       set({ error: error.response?.data?.message || 'Failed to update persona' });
       throw error;
     }
   },
 
   deletePersona: async (id: string) => {
+    const session = personaSessionId;
     try {
       await personaApi.delete(id);
+      if (session !== personaSessionId) return;
       set((state) => ({
         personas: state.personas.filter((p) => p.id !== id),
-        activePersonaId: state.activePersonaId === id
-          ? state.personas.find((p) => p.id !== id)?.id || null
-          : state.activePersonaId,
+        activePersonaId:
+          state.activePersonaId === id
+            ? state.personas.find((p) => p.id !== id)?.id || null
+            : state.activePersonaId,
       }));
     } catch (error: any) {
+      if (session !== personaSessionId) throw error;
       set({ error: error.response?.data?.message || 'Failed to delete persona' });
       throw error;
     }
@@ -112,3 +133,8 @@ export const usePersonaStore = create<PersonaState>((set) => ({
 
   clearError: () => set({ error: null }),
 }));
+
+export function resetPersonaSession(): void {
+  ++personaSessionId;
+  usePersonaStore.setState({ personas: [], activePersonaId: null, isLoading: false, error: null });
+}

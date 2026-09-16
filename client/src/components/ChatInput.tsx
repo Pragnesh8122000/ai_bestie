@@ -15,8 +15,24 @@ export default function ChatInput() {
   const isBusy = isStreaming || isLoadingConversation || !activeConversation;
   const { personas } = usePersonaStore();
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const recordingController = useRef<AbortController | null>(null);
   const sttSupported = isSTTSupported();
-  const bestieName = personas.find((p) => p.id === activeConversation?.personaId)?.name || 'your bestie';
+  const bestieName =
+    personas.find((p) => p.id === activeConversation?.personaId)?.name || 'your bestie';
+
+  useEffect(() => {
+    setMessage('');
+    setInterim('');
+    setMicError(null);
+    setIsRecording(false);
+    return () => {
+      recordingController.current?.abort();
+      recordingController.current = null;
+      if (useChatStore.getState().avatarState === 'listening') {
+        useChatStore.setState({ avatarState: 'idle' });
+      }
+    };
+  }, [activeConversation?.id]);
 
   useEffect(() => {
     if (inputRef.current) {
@@ -34,7 +50,7 @@ export default function ChatInput() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSubmit(e);
     }
@@ -48,13 +64,25 @@ export default function ChatInput() {
     setInterim('');
     setMicError(null);
     setIsRecording(true);
+    useChatStore.setState({ avatarState: 'listening' });
+    const controller = new AbortController();
+    recordingController.current = controller;
     try {
-      const transcript = await listenOnce('en-US', (text) => setInterim(text));
+      const transcript = await listenOnce(
+        'en-US',
+        (text) => {
+          if (!controller.signal.aborted) setInterim(text);
+        },
+        8000,
+        controller.signal,
+      );
+      if (controller.signal.aborted) return;
       if (transcript) {
         setMessage((prev) => (prev ? `${prev} ${transcript}` : transcript));
         inputRef.current?.focus();
       }
     } catch (err) {
+      if (controller.signal.aborted) return;
       console.error('Speech recognition failed:', err);
       const code = err instanceof Error ? err.message : '';
       // Brave ships the webkitSpeechRecognition constructor but disables the
@@ -63,7 +91,7 @@ export default function ChatInput() {
       // and Edge use the same backend and work fine; Safari uses its own.
       if (code === 'network') {
         setMicError(
-          'Voice typing isn\u2019t available in this browser (it blocks the speech service). Try Chrome, Edge, or Safari \u2014 or just type.'
+          'The speech service is unavailable. Check your connection or try Chrome, Edge, or Safari. You can also type.',
         );
       } else if (code === 'not-allowed' || code === 'service-not-allowed') {
         setMicError('Mic access is blocked. Allow microphone access for this site and try again.');
@@ -73,16 +101,19 @@ export default function ChatInput() {
         setMicError('Voice typing failed. Try again or type instead.');
       }
     } finally {
-      setInterim('');
-      setIsRecording(false);
+      if (recordingController.current === controller) {
+        recordingController.current = null;
+        setInterim('');
+        setIsRecording(false);
+        if (useChatStore.getState().avatarState === 'listening') {
+          useChatStore.setState({ avatarState: 'idle' });
+        }
+      }
     }
   };
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="sticky bottom-4 z-20 px-3 sm:bottom-6 sm:px-8"
-    >
+    <form onSubmit={handleSubmit} className="sticky bottom-4 z-20 px-3 sm:bottom-6 sm:px-8">
       <div className="mx-auto flex w-full max-w-2xl items-end gap-2 rounded-[32px] border border-ember/25 bg-ink-2/90 p-2 shadow-2xl backdrop-blur-md transition-shadow duration-200 focus-within:border-ember/50 focus-within:shadow-[0_0_0_1px_var(--color-ember-glow),0_20px_50px_-15px_rgba(0,0,0,0.6)] sm:gap-3 sm:p-2.5">
         {/* Talk — larger, more prominent */}
         {sttSupported && (
@@ -117,15 +148,17 @@ export default function ChatInput() {
                 ? interim || 'Listening…'
                 : `or type to ${bestieName}…`
           }
-          disabled={isBusy}
+          aria-label={`Message ${bestieName}`}
+          disabled={isBusy || isRecording}
           rows={1}
+          maxLength={10000}
           className="flex-1 resize-none rounded-[20px] border border-line bg-clay/40 px-4 py-3 text-[15px] leading-snug text-linen placeholder-linen-dim/60 transition-colors duration-150 focus:border-ember focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         />
 
         {/* Send — gradient, bold */}
         <motion.button
           type="submit"
-          disabled={!message.trim() || isBusy}
+          disabled={!message.trim() || isBusy || isRecording}
           whileHover={{ scale: 1.05, y: -2 }}
           whileTap={{ scale: 0.95 }}
           className="flex h-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-ember to-ember-soft px-6 font-sans text-sm font-semibold text-ink transition-all duration-150 hover:brightness-105 active:brightness-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"

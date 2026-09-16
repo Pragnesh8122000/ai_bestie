@@ -30,6 +30,7 @@ interface SpeechRecognitionLike {
   interimResults: boolean;
   start(): void;
   stop(): void;
+  abort?(): void;
   onresult: ((e: SpeechRecognitionEventLike) => void) | null;
   onerror: ((e: { error: string }) => void) | null;
   onend: (() => void) | null;
@@ -53,7 +54,9 @@ export function isSTTSupported(): boolean {
 // Server-side neural TTS works on any browser that can fetch+play audio; the
 // browser speechSynthesis fallback is a bonus, not a requirement.
 export function isTTSSupported(): boolean {
-  return typeof window !== 'undefined' && (typeof fetch !== 'undefined' || 'speechSynthesis' in window);
+  return (
+    typeof window !== 'undefined' && (typeof fetch !== 'undefined' || 'speechSynthesis' in window)
+  );
 }
 
 /* ------------------------------- TTS ------------------------------- */
@@ -87,6 +90,31 @@ let pumping = false;
 let speaking = false; // an item is currently playing (drives notifyState(true))
 let currentAudio: HTMLAudioElement | null = null;
 let currentAudioUrl: string | null = null;
+let finishPlayback: (() => void) | null = null;
+const pendingFetches = new Set<AbortController>();
+const FETCH_TIMEOUT_MS = 15_000;
+const PLAYBACK_TIMEOUT_MS = 120_000;
+// Slow both voice engines to 70% of their previous speaking rate.
+const VOICE_SPEED_MULTIPLIER = 0.7;
+
+function reportSpeechError(): void {
+  if (
+    typeof window !== 'undefined' &&
+    typeof window.dispatchEvent === 'function' &&
+    typeof CustomEvent !== 'undefined'
+  ) {
+    window.dispatchEvent(
+      new CustomEvent('speech:error', {
+        detail: 'Some voice audio could not be played. The full reply is available in chat.',
+      }),
+    );
+  }
+}
+
+function abortFetches(): void {
+  for (const controller of pendingFetches) controller.abort();
+  pendingFetches.clear();
+}
 
 /** Register a listener that fires when audio actually starts/stops. */
 export function setTtsStateListener(fn: TtsStateListener | null): void {
@@ -156,8 +184,7 @@ function loadVoice(): void {
   // No recognised female voice: take the first English voice that isn't a
   // known male one, and only then fall back to whatever exists. Deterministic
   // either way — the same voice for every sentence of every reply.
-  preferredVoice =
-    best || pool.find((v) => !MALE_VOICE_NAMES.test(v.name)) || pool[0] || null;
+  preferredVoice = best || pool.find((v) => !MALE_VOICE_NAMES.test(v.name)) || pool[0] || null;
 }
 
 if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -181,14 +208,26 @@ function splitChunks(text: string): string[] {
   const parts = text.match(/[^.!?…\n]+[.!?…\n]*\s*|.+/g) || [text];
   const chunks: string[] = [];
   let buf = '';
-  for (const raw of parts) {
-    const piece = raw.trim();
-    if (!piece) continue;
-    if ((buf + ' ' + piece).trim().length > 320) {
-      if (buf.trim()) chunks.push(buf.trim());
-      buf = piece;
-    } else {
-      buf = (buf ? buf + ' ' : '') + piece;
+  for (const original of parts) {
+    // Long utterances without punctuation also need a hard request cap.
+    let remaining = original.trim();
+    const bounded: string[] = [];
+    while (remaining.length > 320) {
+      const boundary = remaining.lastIndexOf(' ', 320);
+      const end = boundary > 160 ? boundary : 320;
+      bounded.push(remaining.slice(0, end));
+      remaining = remaining.slice(end).trim();
+    }
+    if (remaining) bounded.push(remaining);
+    for (const raw of bounded) {
+      const piece = raw.trim();
+      if (!piece) continue;
+      if ((buf + ' ' + piece).trim().length > 320) {
+        if (buf.trim()) chunks.push(buf.trim());
+        buf = piece;
+      } else {
+        buf = (buf ? buf + ' ' : '') + piece;
+      }
     }
   }
   if (buf.trim()) chunks.push(buf.trim());
@@ -217,6 +256,9 @@ function cancelCurrent(): void {
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
     window.speechSynthesis.cancel();
   }
+  // pause() and speechSynthesis.cancel() need not emit end/error events.
+  // Settle the active await so the next reply can start its pump.
+  finishPlayback?.();
 }
 
 function cancelItem(item: QueueItem): void {
@@ -232,6 +274,7 @@ function cancelItem(item: QueueItem): void {
 /** Reset the queue for a new reply (cancels any in-progress audio). */
 export function beginSpeech(): void {
   speechSession++;
+  abortFetches();
   textQueue = [];
   cancelCurrent();
   speaking = false;
@@ -254,6 +297,7 @@ export function speak(text: string, lang = 'en-US'): void {
 
 export function stopSpeaking(): void {
   speechSession++;
+  abortFetches();
   textQueue = [];
   cancelCurrent();
   speaking = false;
@@ -261,28 +305,65 @@ export function stopSpeaking(): void {
 }
 
 /**
- * Pump the text queue: fetch+play one chunk at a time, in order. Serialized
- * so sentences never interleave; the store's per-sentence speakChunk calls
- * already stagger fetches across sentences for low first-audio latency.
+ * Pump the text queue: play one chunk at a time, in order, while synthesizing
+ * the *next* one concurrently.
+ *
+ * Playback stays strictly serialized (two sentences must never overlap), but
+ * synthesis no longer waits for playback to finish. Previously this loop was
+ * fully serial — fetch, play, fetch, play — so every sentence boundary stalled
+ * for the whole synthesis time of the next chunk. Measured against the real
+ * Kokoro endpoint that was ~2.2-3.2s of dead air at each full stop.
+ *
+ * Synthesis runs at roughly 0.63x the duration of the audio it produces, so
+ * starting chunk N+1 when chunk N begins playing means it is almost always
+ * ready before chunk N ends, and the gap collapses to the buffer-swap time.
+ *
+ * Prefetch depth is deliberately 1. The server synthesizes under a mutex, so
+ * queuing more requests would not make any single one arrive sooner, and it
+ * would waste CPU on audio that a `stopSpeaking()` is about to discard.
  */
 async function pump(lang: string): Promise<void> {
   if (pumping) return;
   pumping = true;
   const mySession = speechSession;
+  // Synthesis of the chunk after the one currently playing, if any.
+  let prefetch: Promise<QueueItem | null> | null = null;
   try {
     while (mySession === speechSession) {
       const chunk = textQueue.shift();
       if (chunk === undefined) break;
-      const item = await fetchItem(chunk, lang, mySession);
+
+      // Use the in-flight synthesis when it belongs to this chunk, otherwise
+      // synthesize now. The first chunk of a reply always takes this second
+      // path, which is what pins `ttsMode` before any concurrent fetch starts
+      // — the engine choice stays a single, race-free decision.
+      const item = await (prefetch ?? fetchItem(chunk, lang, mySession));
+      prefetch = null;
+
       if (mySession !== speechSession) {
         if (item) cancelItem(item);
         break;
       }
+
+      // Kick off the next synthesis *before* awaiting playback, so the CPU
+      // works on chunk N+1 while chunk N is audible. This is the whole fix.
+      const next = textQueue[0];
+      if (next !== undefined) {
+        prefetch = fetchItem(next, lang, mySession);
+        // A rejected prefetch must not surface as an unhandled rejection while
+        // it sits idle during playback; fetchItem already resolves errors to
+        // null, but a defensive catch keeps that contract local.
+        prefetch = prefetch.catch(() => null);
+      }
+
       if (item) await playItem(item, mySession);
       if (mySession !== speechSession) break;
     }
   } finally {
     pumping = false;
+    // Don't leak the blob URL of audio that was synthesized but never played
+    // (stream aborted, conversation switched, TTS toggled off).
+    if (prefetch) void prefetch.then((i) => i && cancelItem(i));
     if (textQueue.length > 0) {
       // A new chunk arrived during the final await — keep pumping so it isn't
       // stranded (its own pump() call returned early while we were running).
@@ -305,7 +386,7 @@ function localItem(chunk: string, lang: string): QueueItem | null {
   const u = new SpeechSynthesisUtterance(chunk);
   u.lang = preferredVoice?.lang || lang;
   if (preferredVoice) u.voice = preferredVoice;
-  u.rate = 0.98;
+  u.rate = 0.98 * VOICE_SPEED_MULTIPLIER;
   u.pitch = 1.0;
   return { kind: 'local', utt: u };
 }
@@ -326,13 +407,21 @@ async function fetchItem(
   mySession: number,
 ): Promise<QueueItem | null> {
   if (ttsMode === 'local') return localItem(chunk, lang);
+  const controller = new AbortController();
+  pendingFetches.add(controller);
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     const res = await fetch('/api/tts', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: chunk, lang }),
+      signal: controller.signal,
     });
+    if (res.status === 401) {
+      window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+      throw new Error('Authentication required');
+    }
     if (!res.ok) throw new Error(`tts ${res.status}`);
     const blob = await res.blob();
     if (blob.size === 0) throw new Error('tts empty');
@@ -347,11 +436,17 @@ async function fetchItem(
     if (ttsMode === 'remote') {
       // The neural voice already spoke earlier in this session; a one-off
       // failure must not switch voices mid-reply. Skip this chunk instead.
+      reportSpeechError();
       return null;
     }
     // Nothing has spoken yet — commit to the browser voice for the session.
     ttsMode = 'local';
-    return localItem(chunk, lang);
+    const item = localItem(chunk, lang);
+    if (!item) reportSpeechError();
+    return item;
+  } finally {
+    clearTimeout(timeout);
+    pendingFetches.delete(controller);
   }
 }
 
@@ -363,17 +458,32 @@ function playItem(item: QueueItem, mySession: number): Promise<void> {
       resolve();
       return;
     }
-    if (!speaking) {
-      speaking = true;
-      notifyState(true);
-    }
     let settled = false;
+    const started = () => {
+      if (settled || mySession !== speechSession) return;
+      if (!speaking) {
+        speaking = true;
+        notifyState(true);
+      }
+    };
+    const timeout = setTimeout(() => {
+      if (mySession === speechSession) reportSpeechError();
+      cancelCurrent();
+    }, PLAYBACK_TIMEOUT_MS);
     const done = () => {
       // `onended` + `onerror` can both fire; resolving twice would let the
       // pump start the next chunk while this one is still audible.
       if (settled) return;
       settled = true;
+      clearTimeout(timeout);
+      if (finishPlayback === done) finishPlayback = null;
+      if (mySession === speechSession) {
+        speaking = false;
+        notifyState(false);
+      }
       if (item.kind === 'remote') {
+        item.audio.onended = null;
+        item.audio.onerror = null;
         if (currentAudio === item.audio) {
           currentAudio = null;
           currentAudioUrl = null;
@@ -382,19 +492,35 @@ function playItem(item: QueueItem, mySession: number): Promise<void> {
       }
       resolve();
     };
+    const failed = () => {
+      if (!settled && mySession === speechSession) reportSpeechError();
+      done();
+    };
+    finishPlayback = done;
     if (item.kind === 'remote') {
       currentAudio = item.audio;
       currentAudioUrl = item.url;
+      item.audio.playbackRate = VOICE_SPEED_MULTIPLIER;
+      item.audio.preservesPitch = true;
       item.audio.onended = done;
-      item.audio.onerror = done;
-      void item.audio.play().catch(done);
+      item.audio.onerror = failed;
+      try {
+        void item.audio.play().then(started, failed);
+      } catch {
+        failed();
+      }
     } else {
       // Clear anything the browser still has queued so two utterances can
       // never speak over each other.
       window.speechSynthesis.cancel();
       item.utt.onend = done;
-      item.utt.onerror = done;
-      window.speechSynthesis.speak(item.utt);
+      item.utt.onstart = started;
+      item.utt.onerror = failed;
+      try {
+        window.speechSynthesis.speak(item.utt);
+      } catch {
+        failed();
+      }
     }
   });
 }
@@ -410,6 +536,7 @@ export function listenOnce(
   lang = 'en-US',
   onInterim?: (text: string) => void,
   maxMs = 8000,
+  signal?: AbortSignal,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const Ctor = getRecognitionCtor();
@@ -425,38 +552,50 @@ export function listenOnce(
 
     let finalTranscript = '';
     let settled = false;
-    const timer = setTimeout(() => {
-      try {
-        recognition.stop();
-      } catch {
-        /* ignore */
-      }
-    }, maxMs);
-
-    const finish = () => {
+    const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve(finalTranscript.trim());
+      signal?.removeEventListener('abort', abort);
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+      try {
+        if (recognition.abort) recognition.abort();
+        else recognition.stop();
+      } catch {
+        /* already stopped */
+      }
+      if (error) reject(error);
+      else resolve(finalTranscript.trim());
     };
+    const abort = () => finish(new DOMException('Aborted', 'AbortError'));
+    const timer = setTimeout(() => finish(), maxMs);
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
 
     recognition.onresult = (e) => {
       let interim = '';
+      finalTranscript = '';
       for (let i = 0; i < e.results.length; i++) {
         const r = e.results[i];
-        if (r.isFinal) finalTranscript += r[0].transcript;
+        if (r.isFinal) finalTranscript += (finalTranscript ? ' ' : '') + r[0].transcript;
         else interim += r[0].transcript;
       }
       onInterim?.((finalTranscript + (interim ? ' ' + interim : '')).trim());
     };
     recognition.onerror = (e) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(new Error(e.error || 'speech-recognition-error'));
+      finish(new Error(e.error || 'speech-recognition-error'));
     };
-    recognition.onend = finish;
+    recognition.onend = () => finish();
 
-    recognition.start();
+    try {
+      recognition.start();
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error('speech-recognition-error'));
+    }
   });
 }

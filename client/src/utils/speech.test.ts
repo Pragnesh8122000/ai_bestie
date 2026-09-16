@@ -92,6 +92,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  speech?.stopSpeaking();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -159,7 +161,10 @@ describe('voice consistency', () => {
   });
 
   it('never picks a male voice even when no known female voice exists', async () => {
-    installedVoices = [new FakeVoice('Daniel', 'en-GB'), new FakeVoice('Google UK English Female', 'en-GB')];
+    installedVoices = [
+      new FakeVoice('Daniel', 'en-GB'),
+      new FakeVoice('Google UK English Female', 'en-GB'),
+    ];
     installSpeechSynthesis();
     vi.stubGlobal(
       'fetch',
@@ -214,6 +219,76 @@ describe('voice consistency', () => {
 });
 
 describe('playback serialisation', () => {
+  it('bounds a hung TTS request and lets the following reply start', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url, options) =>
+          new Promise((_resolve, reject) => {
+            options.signal.addEventListener('abort', () =>
+              reject(new DOMException('Aborted', 'AbortError')),
+            );
+          }),
+      ),
+    );
+    await loadFreshModule();
+    speech.beginSpeech();
+    speech.speakChunk('First.');
+    await vi.advanceTimersByTimeAsync(15_020);
+    expect(spoken).toHaveLength(1);
+    speech.beginSpeech();
+    speech.speakChunk('Second.');
+    await vi.advanceTimersByTimeAsync(10);
+    expect(spoken).toHaveLength(2);
+  });
+  it('can start a new reply after stopping audio that never fires ended', async () => {
+    let playCount = 0;
+    class NeverEndsAudio extends FakeAudio {
+      play() {
+        playCount++;
+        return Promise.resolve();
+      }
+    }
+    (globalThis as any).Audio = NeverEndsAudio;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, blob: async () => ({ size: 1024 }) })),
+    );
+    await loadFreshModule();
+    speech.beginSpeech();
+    speech.speakChunk('First.');
+    await flush(10);
+    speech.stopSpeaking();
+    speech.beginSpeech();
+    speech.speakChunk('Second.');
+    await flush(20);
+    expect(playCount).toBe(2);
+    speech.stopSpeaking();
+  });
+
+  it('aborts a pending synthesis fetch when speech is stopped', async () => {
+    let requestSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url, options) => {
+        requestSignal = options?.signal;
+        return new Promise((_resolve, reject) =>
+          requestSignal?.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError')),
+          ),
+        );
+      }),
+    );
+    await loadFreshModule();
+    speech.beginSpeech();
+    speech.speakChunk('First.');
+    await flush(5);
+    speech.stopSpeaking();
+    expect(requestSignal?.aborted).toBe(true);
+    await flush(5);
+    expect(spoken).toHaveLength(0);
+  });
   it('does not swap to a better voice when onvoiceschanged fires mid-reply', async () => {
     // Chrome populates getVoices() asynchronously and fires onvoiceschanged
     // after playback may already have begun. Re-picking then would change the
@@ -322,5 +397,303 @@ describe('playback serialisation', () => {
     expect(states[states.length - 1]).toBe(false);
     // No further audio started after the stop.
     expect(spoken.length).toBe(countAtStop);
+  });
+});
+
+describe('speech recognition lifecycle', () => {
+  function recognition() {
+    const instance: any = {};
+    class Recognition {
+      onresult: any;
+      onend: any;
+      onerror: any;
+      start = vi.fn();
+      stop = vi.fn();
+      abort = vi.fn();
+      constructor() {
+        Object.assign(instance, { recognition: this });
+      }
+    }
+    (globalThis as any).webkitSpeechRecognition = Recognition;
+    return () => instance.recognition;
+  }
+
+  it('does not duplicate final text from cumulative recognition events', async () => {
+    const current = recognition();
+    await loadFreshModule();
+    const pending = speech.listenOnce();
+    current().onresult({ results: [{ isFinal: true, 0: { transcript: 'Hello' } }] });
+    current().onresult({
+      results: [
+        { isFinal: true, 0: { transcript: 'Hello' } },
+        { isFinal: true, 0: { transcript: 'there' } },
+      ],
+    });
+    current().onend();
+    await expect(pending).resolves.toBe('Hello there');
+    delete (globalThis as any).webkitSpeechRecognition;
+  });
+
+  it('settles after its deadline even if the browser never emits onend', async () => {
+    vi.useFakeTimers();
+    const current = recognition();
+    await loadFreshModule();
+    const pending = speech.listenOnce('en-US', undefined, 50);
+    await vi.advanceTimersByTimeAsync(50);
+    await expect(pending).resolves.toBe('');
+    expect(current().abort).toHaveBeenCalled();
+    delete (globalThis as any).webkitSpeechRecognition;
+  });
+
+  it('aborts recognition and drops callbacks when the conversation changes', async () => {
+    const current = recognition();
+    await loadFreshModule();
+    const controller = new AbortController();
+    const pending = speech.listenOnce('en-US', undefined, 8000, controller.signal);
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    controller.abort();
+    await rejected;
+    expect(current().onresult).toBeNull();
+    expect(current().abort).toHaveBeenCalled();
+    delete (globalThis as any).webkitSpeechRecognition;
+  });
+});
+
+/**
+ * The companion used to pause 3-5s at every full stop. The pump was fully
+ * serial (fetch, play, fetch, play), so each sentence boundary stalled for the
+ * whole synthesis time of the next chunk — measured at 2.2-3.2s against the
+ * real Kokoro endpoint.
+ *
+ * Synthesis now overlaps playback. These tests pin that behaviour without
+ * weakening the ordering and cancellation guarantees above.
+ */
+describe('inter-sentence gap', () => {
+  // Each test here drives real timers. Without an explicit teardown the
+  // previous test's queue keeps draining into the *next* test's shared
+  // `spoken` array, so assertions see phantom playbacks.
+  afterEach(async () => {
+    speech?.stopSpeaking?.();
+    await flush(60);
+  });
+
+  /** Audio that plays for `playMs`, and synthesis that takes `synthMs`. */
+  function installTimedTts(synthMs: number, playMs: number) {
+    const events: Array<{ at: number; kind: string; n: number }> = [];
+    const t0 = Date.now();
+    let fetchN = 0;
+    let playN = 0;
+
+    class TimedAudio extends FakeAudio {
+      play() {
+        const n = ++playN;
+        events.push({ at: Date.now() - t0, kind: 'play-start', n });
+        spoken.push({ engine: 'remote', voice: 'kokoro' });
+        setTimeout(() => {
+          events.push({ at: Date.now() - t0, kind: 'play-end', n });
+          this.onended?.();
+        }, playMs);
+        return Promise.resolve();
+      }
+    }
+    (globalThis as any).Audio = TimedAudio;
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const n = ++fetchN;
+        events.push({ at: Date.now() - t0, kind: 'fetch-start', n });
+        await new Promise((r) => setTimeout(r, synthMs));
+        events.push({ at: Date.now() - t0, kind: 'fetch-end', n });
+        return { ok: true, blob: async () => ({ size: 1024 }) };
+      }),
+    );
+    return events;
+  }
+
+  /** Silence between the end of one chunk and the start of the next. */
+  function gaps(events: Array<{ at: number; kind: string; n: number }>): number[] {
+    const out: number[] = [];
+    const starts = events.filter((e) => e.kind === 'play-start');
+    const ends = events.filter((e) => e.kind === 'play-end');
+    for (let i = 0; i < ends.length; i++) {
+      const next = starts.find((s) => s.n === ends[i].n + 1);
+      if (next) out.push(next.at - ends[i].at);
+    }
+    return out;
+  }
+
+  it('synthesizes the next chunk while the current one is playing', async () => {
+    const events = installTimedTts(60, 100);
+    await loadFreshModule();
+
+    speech.beginSpeech();
+    speech.speakChunk('One.');
+    speech.speakChunk('Two.');
+    speech.speakChunk('Three.');
+    await flush(700);
+
+    // The decisive assertion: chunk 2's synthesis begins before chunk 1's
+    // audio ends. Under the old serial pump it began strictly after.
+    const fetch2 = events.find((e) => e.kind === 'fetch-start' && e.n === 2)!;
+    const play1End = events.find((e) => e.kind === 'play-end' && e.n === 1)!;
+    expect(fetch2).toBeDefined();
+    expect(fetch2.at).toBeLessThan(play1End.at);
+  });
+
+  it('leaves almost no silence between sentences when synthesis is faster than playback', async () => {
+    // Mirrors production: synthesis ~0.6x the audio duration.
+    const events = installTimedTts(60, 100);
+    await loadFreshModule();
+
+    speech.beginSpeech();
+    speech.speakChunk('One.');
+    speech.speakChunk('Two.');
+    speech.speakChunk('Three.');
+    await flush(700);
+
+    const g = gaps(events);
+    expect(g.length).toBe(2);
+    // Prefetched audio is already in hand, so the swap is near-instant. The
+    // old behaviour left a full synthesis (60ms here) of dead air.
+    for (const gap of g) expect(gap).toBeLessThan(30);
+  });
+
+  it('still bounds the gap when synthesis is slower than playback', async () => {
+    // Worst case: synthesis outruns the audio it produces. The gap cannot be
+    // zero, but it must be the *overhang* (synth - play), not the full synth.
+    const events = installTimedTts(150, 100);
+    await loadFreshModule();
+
+    speech.beginSpeech();
+    speech.speakChunk('One.');
+    speech.speakChunk('Two.');
+    await flush(900);
+
+    const g = gaps(events);
+    expect(g.length).toBe(1);
+    // Serial would have been ~150ms; overlapped leaves ~50ms.
+    expect(g[0]).toBeLessThan(110);
+  });
+
+  it('keeps sentences in order and non-overlapping while prefetching', async () => {
+    const events = installTimedTts(30, 80);
+    await loadFreshModule();
+
+    speech.beginSpeech();
+    speech.speakChunk('One.');
+    speech.speakChunk('Two.');
+    speech.speakChunk('Three.');
+    speech.speakChunk('Four.');
+    await flush(900);
+
+    const order = events.filter((e) => e.kind.startsWith('play')).map((e) => `${e.kind}:${e.n}`);
+    // Strictly start,end,start,end... — never two overlapping utterances.
+    expect(order).toEqual([
+      'play-start:1',
+      'play-end:1',
+      'play-start:2',
+      'play-end:2',
+      'play-start:3',
+      'play-end:3',
+      'play-start:4',
+      'play-end:4',
+    ]);
+  });
+
+  it('does not prefetch more than one chunk ahead', async () => {
+    // The server synthesizes under a mutex, so deeper queuing buys nothing and
+    // wastes CPU on audio a stop would discard.
+    const events = installTimedTts(40, 200);
+    await loadFreshModule();
+
+    speech.beginSpeech();
+    speech.speakChunk('One.');
+    speech.speakChunk('Two.');
+    speech.speakChunk('Three.');
+    speech.speakChunk('Four.');
+    await flush(150); // chunk 1 still playing
+
+    const started = events.filter((e) => e.kind === 'fetch-start').length;
+    expect(started).toBeLessThanOrEqual(2);
+  });
+
+  it('discards a prefetched chunk when speech is stopped', async () => {
+    // Distinct blob URLs so a *specific* one can be traced. Counting total
+    // revokes is not enough: normal playback revokes its own URL, so a naive
+    // "something was revoked" assertion passes even when the prefetched chunk
+    // leaks (verified by deleting the cleanup line — the test still passed).
+    let issued = 0;
+    const created: string[] = [];
+    const revoked: string[] = [];
+    (globalThis as any).URL.createObjectURL = () => {
+      const u = `blob:chunk-${++issued}`;
+      created.push(u);
+      return u;
+    };
+    installTimedTts(30, 200);
+    await loadFreshModule();
+    (globalThis as any).URL.revokeObjectURL = (u: string) => revoked.push(u);
+
+    speech.beginSpeech();
+    speech.speakChunk('One.');
+    speech.speakChunk('Two.');
+    await flush(120); // chunk 1 playing, chunk 2 prefetched and waiting
+    const countAtStop = spoken.length;
+    expect(created.length).toBe(2); // the prefetch really did happen
+    speech.stopSpeaking();
+    await flush(300);
+
+    // The prefetched chunk never plays...
+    expect(spoken.length).toBe(countAtStop);
+    // ...and *its* blob URL specifically is released, not just chunk 1's.
+    expect(revoked).toContain(created[1]);
+  });
+
+  it('still falls back to one browser voice when the very first chunk fails', async () => {
+    // Prefetch must not let a concurrent request decide the engine: the first
+    // chunk is always synthesized alone, so ttsMode is pinned race-free.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('offline');
+      }),
+    );
+    await loadFreshModule();
+
+    speech.beginSpeech();
+    speech.speakChunk('One.');
+    speech.speakChunk('Two.');
+    speech.speakChunk('Three.');
+    await flush(200);
+
+    expect(spoken.length).toBe(3);
+    expect(new Set(spoken.map((s) => s.engine))).toEqual(new Set(['local']));
+    expect(new Set(spoken.map((s) => s.voice)).size).toBe(1);
+  });
+
+  it('skips a failed middle chunk without switching voices or stalling', async () => {
+    let call = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        call++;
+        await new Promise((r) => setTimeout(r, 20));
+        if (call === 2) throw new Error('network');
+        return { ok: true, blob: async () => ({ size: 1024 }) };
+      }),
+    );
+    await loadFreshModule();
+
+    speech.beginSpeech();
+    speech.speakChunk('One.');
+    speech.speakChunk('Two.');
+    speech.speakChunk('Three.');
+    await flush(400);
+
+    // Two of three play; the failure is silent, not a second voice, and the
+    // queue keeps draining rather than deadlocking on the rejected prefetch.
+    expect(spoken.length).toBe(2);
+    expect(new Set(spoken.map((s) => s.engine))).toEqual(new Set(['remote']));
   });
 });

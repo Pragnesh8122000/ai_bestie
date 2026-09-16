@@ -34,6 +34,8 @@ interface Provider {
 }
 
 const RETRIES_PER_MODEL = 2;
+const CONNECTION_TIMEOUT_MS = 5_000;
+const FIRST_TOKEN_TIMEOUT_MS = 5_000;
 // In-process rate-limit cooldown (free, no shared state). Maps a
 // "provider/model" key to the epoch-ms when it may be retried. Lets us skip
 // models the provider just told us to back off from, instead of burning more
@@ -44,15 +46,19 @@ const MAX_COOLDOWN_MS = 5 * 60_000;
 
 const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(t);
-        reject(new DOMException('Aborted', 'AbortError'));
-      },
-      { once: true },
-    );
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const abort = () => {
+      clearTimeout(t);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    const t = setTimeout(() => {
+      signal?.removeEventListener('abort', abort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', abort, { once: true });
   });
 
 function buildProviders(): Provider[] {
@@ -63,7 +69,7 @@ function buildProviders(): Provider[] {
       name: 'gemini',
       url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
       apiKey: config.llm.geminiApiKey,
-      models: [config.llm.geminiModel, ...config.llm.geminiFallbackModels],
+      models: [...new Set([config.llm.geminiModel, ...config.llm.geminiFallbackModels])],
       // Gemini 2.5/Flash are "thinking" models — without this they spend the token
       // budget on internal reasoning and the first visible token is delayed. "none"
       // gives direct, fast replies (ideal for simple chat).
@@ -76,7 +82,7 @@ function buildProviders(): Provider[] {
       name: 'openrouter',
       url: 'https://openrouter.ai/api/v1/chat/completions',
       apiKey: config.llm.openrouterApiKey,
-      models: [config.llm.openrouterModel, ...config.llm.openrouterFallbackModels],
+      models: [...new Set([config.llm.openrouterModel, ...config.llm.openrouterFallbackModels])],
       // OpenRouter requests attribution headers for free-model routing/ranking.
       extraHeaders: {
         'HTTP-Referer': config.client.url,
@@ -103,16 +109,44 @@ async function openStream(
 
   for (let attempt = 0; attempt < RETRIES_PER_MODEL; attempt++) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-        ...(extraHeaders || {}),
-      },
-      body: JSON.stringify({ ...payload, ...extraBody, model }),
-      signal,
-    });
+    response = null;
+    const connectionController = new AbortController();
+    const deadline = setTimeout(() => connectionController.abort(), CONNECTION_TIMEOUT_MS);
+    const began = performance.now();
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+          ...(extraHeaders || {}),
+        },
+        body: JSON.stringify({ ...payload, ...extraBody, model }),
+        signal: signal
+          ? AbortSignal.any([signal, connectionController.signal])
+          : connectionController.signal,
+      });
+    } catch (error) {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      return {
+        response: new Response(null, { status: 503 }),
+        ok: false,
+        error: error instanceof Error ? error.message : 'Network error',
+        status: 503,
+      };
+    } finally {
+      clearTimeout(deadline);
+      if (config.nodeEnv !== 'test')
+        console.info(
+          JSON.stringify({
+            event: 'llm-connect',
+            model,
+            attempt,
+            status: response?.status || 0,
+            durationMs: Math.round(performance.now() - began),
+          }),
+        );
+    }
 
     if (response.ok && response.body) {
       return { response, ok: true, error: '', status: response.status };
@@ -120,14 +154,15 @@ async function openStream(
 
     lastStatus = response.status;
     lastError = await response.text().catch(() => '');
-    const retryable = response.status === 429 || response.status >= 500;
+    // Enter cooldown immediately for 429s instead of delaying fallback.
+    const retryable = response.status >= 500;
     if (!retryable || attempt === RETRIES_PER_MODEL - 1) {
       return { response: response!, ok: false, error: lastError, status: lastStatus };
     }
     try {
       await sleep(1000 * (attempt + 1), signal);
     } catch {
-      return { response: response!, ok: false, error: lastError, status: lastStatus };
+      throw new DOMException('Aborted', 'AbortError');
     }
   }
 
@@ -151,10 +186,7 @@ export async function streamChat(options: StreamOptions): Promise<string> {
   const payload = {
     stream: true,
     max_tokens: maxTokens,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      ...messages,
-    ],
+    messages: [{ role: 'system', content: systemPrompt }, ...messages],
   };
 
   const errors: string[] = [];
@@ -179,7 +211,22 @@ export async function streamChat(options: StreamOptions): Promise<string> {
         signal,
       );
       if (ok) {
-        return consumeStream(response, onToken, onEnd, signal);
+        let outputStarted = false;
+        try {
+          return await consumeStream(
+            response,
+            (token) => {
+              outputStarted = true;
+              onToken?.(token);
+            },
+            onEnd,
+            signal,
+          );
+        } catch (streamError) {
+          if (signal?.aborted || outputStarted) throw streamError;
+          errors.push(`${key}: failed before first token`);
+          continue;
+        }
       }
       errors.push(`${key}: ${status} ${error.slice(0, 160)}`);
       if (status === 429) {
@@ -219,14 +266,26 @@ async function consumeStream(
   const decoder = new TextDecoder();
   let fullText = '';
   let buffer = '';
+  let completed = false;
+  let firstTokenTimer: ReturnType<typeof setTimeout>;
+  const firstTokenDeadline = new Promise<never>((_resolve, reject) => {
+    firstTokenTimer = setTimeout(
+      () => reject(new Error('First token timed out')),
+      FIRST_TOKEN_TIMEOUT_MS,
+    );
+  });
 
   try {
     while (true) {
-      if (signal?.aborted) break;
-      const { done, value } = await reader.read();
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      const { done, value } = await (fullText
+        ? reader.read()
+        : Promise.race([reader.read(), firstTokenDeadline]));
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
+      buffer = buffer.replace(/\r\n/g, '\n');
 
       const frames = buffer.split('\n\n');
       buffer = frames.pop() || '';
@@ -235,32 +294,42 @@ async function consumeStream(
         const line = frame.split('\n').find((l) => l.startsWith('data:'));
         if (!line) continue;
         const data = line.slice(5).trim();
-        if (!data || data === '[DONE]') continue;
+        if (!data) continue;
+        if (data === '[DONE]') {
+          completed = true;
+          break;
+        }
 
+        let json;
         try {
-          const json = JSON.parse(data);
-          const token = json.choices?.[0]?.delta?.content;
-          if (typeof token === 'string' && token.length > 0) {
-            fullText += token;
-            onToken?.(token);
-          }
+          json = JSON.parse(data);
         } catch {
-          // Skip unparseable keep-alive/comment frames
+          throw new Error('Invalid upstream stream data');
+        }
+        if (json.error) throw new Error('Upstream stream error');
+        if (json.choices?.[0]?.finish_reason != null) completed = true;
+        const token = json.choices?.[0]?.delta?.content;
+        if (typeof token === 'string' && token.length > 0) {
+          clearTimeout(firstTokenTimer!);
+          fullText += token;
+          onToken?.(token);
         }
       }
+      if (completed) break;
     }
   } finally {
+    clearTimeout(firstTokenTimer!);
     // Release the upstream connection whether we finished, aborted, or errored.
     try {
       await reader.cancel();
     } catch {
       // Already released
     }
+    reader.releaseLock();
   }
 
-  // Don't emit a partial result for an aborted stream.
-  if (!signal?.aborted) {
-    onEnd?.(fullText);
-  }
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  if (!completed || !fullText.trim()) throw new Error('Upstream reply interrupted or empty');
+  onEnd?.(fullText);
   return fullText;
 }

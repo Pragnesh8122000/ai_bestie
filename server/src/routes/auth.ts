@@ -71,9 +71,8 @@ router.post(
   '/login',
   authRateLimiter,
   catchAsync(async (req, res, next) => {
-    let input;
     try {
-      input = loginSchema.parse(req.body);
+      req.body = loginSchema.parse(req.body);
     } catch (error) {
       if (error instanceof ZodError) {
         res.status(400).json({

@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { useChatStore } from '../stores/chatStore';
 import { usePersonaStore } from '../stores/personaStore';
+import { stabilizePartialMarkdown } from '../utils/markdown';
+import MessageContent from './MessageContent';
 import VoiceOrb from './VoiceOrb';
 
 const STATUS_LABEL: Record<'idle' | 'thinking' | 'speaking' | 'listening', string> = {
@@ -12,9 +14,9 @@ const STATUS_LABEL: Record<'idle' | 'thinking' | 'speaking' | 'listening', strin
 };
 
 const SUGGESTED_PROMPTS = [
-  "What should I do tonight?",
+  'What should I do tonight?',
   "I'm feeling stuck...",
-  "Tell me something fun",
+  'Tell me something fun',
 ];
 
 function clock(iso?: string): string {
@@ -27,23 +29,40 @@ function clock(iso?: string): string {
 }
 
 export default function ChatWindow() {
-  const { activeConversation, avatarState, isStreaming, streamingContent, sendMessage, isLoadingConversation } =
-    useChatStore();
+  const {
+    activeConversation,
+    avatarState,
+    isStreaming,
+    streamingContent,
+    sendMessage,
+    isLoadingConversation,
+    error,
+    openDefaultConversation,
+  } = useChatStore();
   const { personas } = usePersonaStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const persona = personas.find((p) => p.id === activeConversation?.personaId);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({ behavior: isStreaming ? 'auto' : 'smooth' });
   }, [activeConversation?.messages, streamingContent]);
 
   if (!activeConversation) {
     return (
-      <div className="flex flex-1 items-center justify-center px-6">
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6">
         <p className="font-mono text-xs uppercase tracking-[0.2em] text-linen-dim">
           {isLoadingConversation ? '· loading ·' : '· connecting ·'}
         </p>
+        {!isLoadingConversation && error && (
+          <button
+            type="button"
+            onClick={openDefaultConversation}
+            className="rounded-full border border-ember px-4 py-2 text-sm text-ember"
+          >
+            Retry connection
+          </button>
+        )}
       </div>
     );
   }
@@ -52,7 +71,7 @@ export default function ChatWindow() {
   const showEmpty = messages.length === 0 && !isStreaming;
 
   return (
-    <div className="flex flex-1 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {/* Call stage — larger orb, more presence */}
       <div className="flex flex-col items-center gap-3 px-4 pt-6 pb-4 sm:pt-10 sm:pb-6">
         <VoiceOrb state={avatarState} size={220} showGlow />
@@ -67,7 +86,7 @@ export default function ChatWindow() {
       </div>
 
       {/* Transcript */}
-      <div className="flex-1 overflow-y-auto px-4 sm:px-8">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 sm:px-8">
         {showEmpty && (
           <div className="flex h-full min-h-[200px] flex-col items-center justify-center gap-6">
             <p className="max-w-sm text-center font-display text-lg italic text-linen-dim">
@@ -112,16 +131,19 @@ export default function ChatWindow() {
                   className={`flex ${isYou ? 'justify-end' : 'justify-start'}`}
                 >
                   {isYou ? (
-                    <div className="max-w-[72%] rounded-[18px] border border-line/40 bg-clay/50 px-4 py-2.5 sm:max-w-[65%]">
+                    <div className="max-w-[85%] rounded-[18px] border border-line/40 bg-clay/50 px-4 py-2.5 sm:max-w-[75%]">
                       <span className="mb-1 block font-mono text-[10px] tracking-[0.12em] text-linen-dim/50">
                         {time || 'you'}
                       </span>
-                      <p className="text-[15px] leading-[1.5] text-linen">
+                      {/* Users type prose, not Markdown — rendering their `*`
+                          as emphasis would silently rewrite what they said.
+                          `whitespace-pre-wrap` keeps their own line breaks. */}
+                      <p className="whitespace-pre-wrap break-words text-[15px] leading-[1.5] text-linen">
                         {msg.content}
                       </p>
                     </div>
                   ) : (
-                    <div className="max-w-[72%] border-l-2 border-ember/60 py-0.5 pl-4 sm:max-w-[65%]">
+                    <div className="min-w-0 max-w-[85%] border-l-2 border-ember/60 py-0.5 pl-4 sm:max-w-[75%]">
                       <div className="mb-1 flex items-baseline gap-2">
                         <span className="font-mono text-[10px] tracking-[0.12em] text-linen-dim/50">
                           {(persona?.name || 'sam').toLowerCase()}
@@ -130,9 +152,7 @@ export default function ChatWindow() {
                           {time || 'now'}
                         </span>
                       </div>
-                      <p className="text-[15px] leading-[1.5] text-linen">
-                        {msg.content}
-                      </p>
+                      <MessageContent content={msg.content} />
                     </div>
                   )}
                 </motion.div>
@@ -147,7 +167,7 @@ export default function ChatWindow() {
                 transition={{ duration: 0.35, ease: 'easeOut' }}
                 className="flex justify-start"
               >
-                <div className="max-w-[72%] border-l-2 border-ember/60 py-0.5 pl-4 sm:max-w-[65%]">
+                <div className="min-w-0 max-w-[85%] border-l-2 border-ember/60 py-0.5 pl-4 sm:max-w-[75%]">
                   <div className="mb-1 flex items-baseline gap-2">
                     <span className="font-mono text-[10px] tracking-[0.12em] text-linen-dim/50">
                       {(persona?.name || 'sam').toLowerCase()}
@@ -157,10 +177,9 @@ export default function ChatWindow() {
                     </span>
                   </div>
                   {streamingContent ? (
-                    <p className="text-[15px] leading-[1.5] text-linen">
-                      {streamingContent}
+                    <MessageContent content={stabilizePartialMarkdown(streamingContent)}>
                       <span className="stream-caret" />
-                    </p>
+                    </MessageContent>
                   ) : (
                     <span className="typing-dots" aria-label="typing">
                       <span />

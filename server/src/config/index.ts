@@ -5,8 +5,8 @@ import path from 'path';
 // whether you paste it into `/.env` or `/server/.env`. First load wins; the
 // server file (more specific) is loaded first so it takes precedence.
 const rootDir = path.resolve(__dirname, '../../..');
-dotenv.config({ path: path.resolve(rootDir, '.env') });
 dotenv.config({ path: path.resolve(rootDir, 'server/.env') });
+dotenv.config({ path: path.resolve(rootDir, '.env') });
 
 const DEV_PLACEHOLDERS = new Set([
   'dev-secret-change-in-production',
@@ -60,8 +60,9 @@ export const config = {
     geminiApiKey: process.env.GEMINI_API_KEY || '',
     geminiModel: process.env.GEMINI_MODEL || 'gemini-flash-latest',
     // Free-tier Gemini fallbacks tried in order if the primary 429s persistently.
-    geminiFallbackModels: (process.env.GEMINI_FALLBACK_MODELS ||
-      'gemini-2.0-flash,gemini-3.5-flash')
+    geminiFallbackModels: (
+      process.env.GEMINI_FALLBACK_MODELS || 'gemini-2.0-flash,gemini-3.5-flash'
+    )
       .split(',')
       .map((m) => m.trim())
       .filter(Boolean),
@@ -72,8 +73,10 @@ export const config = {
     openrouterModel: process.env.OPENROUTER_MODEL || 'google/gemma-4-26b-a4b-it:free',
     // Free models rotate upstream rate limits; these are tried in order if the
     // primary returns a persistent 429/5xx. Override via OPENROUTER_FALLBACK_MODELS.
-    openrouterFallbackModels: (process.env.OPENROUTER_FALLBACK_MODELS ||
-      'meta-llama/llama-3.3-70b-instruct:free,meta-llama/llama-3.2-3b-instruct:free,qwen/qwen3-next-80b-a3b-instruct:free')
+    openrouterFallbackModels: (
+      process.env.OPENROUTER_FALLBACK_MODELS ||
+      'meta-llama/llama-3.3-70b-instruct:free,meta-llama/llama-3.2-3b-instruct:free,qwen/qwen3-next-80b-a3b-instruct:free'
+    )
       .split(',')
       .map((m) => m.trim())
       .filter(Boolean),

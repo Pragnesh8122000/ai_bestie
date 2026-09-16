@@ -2,6 +2,10 @@
 
 > How to deploy AI Bestie to production.
 
+The domains below are examples, not verified staging or production URLs. See
+[production-readiness.md](./production-readiness.md) for the current local
+verification results and the hosted release checks still required.
+
 ## Architecture Overview
 
 ```
@@ -114,7 +118,8 @@ services:
 
 ### Start Command
 
-The production server runs the compiled TypeScript. `npm start` is
+The production server runs the compiled TypeScript. From the repository root,
+`npm start` delegates to the server workspace, where the command is
 `node scripts/with-tts-env.cjs node dist/server.js` — the wrapper sets
 `LD_LIBRARY_PATH` (or `DYLD_LIBRARY_PATH` on macOS) so the `sherpa-onnx-node`
 native addon can find its prebuilt shared libraries. If you set a custom start
@@ -155,9 +160,10 @@ Voice replies use **Kokoro** via the `sherpa-onnx-node` native addon, running
    model path and valid speaker-id range. `TTS_MODEL_PATH` only needs setting
    for a custom/int8 model. `TTS_SID` selects the speaker, `TTS_SPEED` the
    rate.
-4. **Fallback**: if the model is missing or fails to load, `/api/tts` returns
-   503 and the client automatically uses the browser `speechSynthesis` voice —
-   voice replies keep working, just lower quality.
+4. **Fallback**: the client chooses neural or browser voice when the page loads.
+   If neural TTS is unavailable then, it chooses browser `speechSynthesis`.
+   Once neural voice is selected, a failed chunk shows a visible error and the
+   complete text remains in chat. The client does not change voices mid-reply.
 
 ### 512 MB RAM caveat (free tier)
 
@@ -186,12 +192,19 @@ Local development is unaffected — your dev machine has ample RAM.
   "buildCommand": "cd client && npm run build",
   "outputDirectory": "client/dist",
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://ai-bestie-api.onrender.com/api/:path*" }
+    { "source": "/api/:path*", "destination": "https://YOUR-BACKEND.example/api/:path*" },
+    { "source": "/avatars/:path*", "destination": "https://YOUR-BACKEND.example/avatars/:path*" },
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
 ```
 
-The `rewrites` rule proxies API calls from the Vercel frontend to the Render backend, avoiding CORS issues.
+Replace the backend placeholder with the actual HTTPS origin. API and avatar
+rewrites precede the SPA fallback. Keep browser API calls relative to the frontend
+origin so production cookie authentication can work through the proxy. Validate
+cookie forwarding and unbuffered SSE in staging; a rewrite alone is not proof.
+This template follows Vercel's [external rewrites](https://vercel.com/docs/routing/rewrites)
+and [Vite SPA routing](https://vercel.com/docs/frameworks/frontend/vite) guidance.
 
 ### Vite Configuration
 
@@ -215,9 +228,12 @@ In production, Vercel's rewrite rule handles the proxy. In development, Vite's p
 
 1. Create an M0 (free) cluster (or run MongoDB locally for development)
 2. No Atlas Vector Search index is needed — the app does not use vector search
-3. The TTL index on `Conversation.expiresAt` is created automatically by the
-   Mongoose schema (`expireAfterSeconds: 0`); conversations expire 48h after
-   the last message, which keeps the M0 512MB footprint bounded
+3. History is retained until soft deletion; the schema no longer declares an
+   expiry index. For an older database, back up first and run the existing
+   `server/src/scripts/migrate-multiconvo.ts` migration against the intended
+   database. Deploying the schema does not drop an existing MongoDB TTL index.
+   Inspect indexes and lifecycle fields before accepting the release. Monitor
+   storage growth; permanent history is no longer bounded by a 48-hour expiry.
 
 ### Connection String
 

@@ -1,9 +1,9 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { useAuthStore } from './stores/authStore';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
-import ChatPage from './pages/ChatPage';
+const ChatPage = lazy(() => import('./pages/ChatPage'));
 
 function App() {
   const { initialize, isAuthenticated, isLoading } = useAuthStore();
@@ -26,34 +26,36 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-ink">
-      <Routes>
-        {/* Public routes */}
-        <Route
-          path="/login"
-          element={
-            isAuthenticated ? <Navigate to="/" replace /> : <LoginPage />
-          }
-        />
-        <Route
-          path="/register"
-          element={
-            isAuthenticated ? <Navigate to="/" replace /> : <RegisterPage />
-          }
-        />
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-ink text-linen-dim">
+          Loading chat…
+        </div>
+      }
+    >
+      <div className="min-h-screen bg-ink">
+        <Routes>
+          {/* Public routes */}
+          <Route
+            path="/login"
+            element={isAuthenticated ? <Navigate to="/" replace /> : <LoginPage />}
+          />
+          <Route
+            path="/register"
+            element={isAuthenticated ? <Navigate to="/" replace /> : <RegisterPage />}
+          />
 
-        {/* Protected routes */}
-        <Route
-          path="/"
-          element={
-            isAuthenticated ? <ChatPage /> : <Navigate to="/login" replace />
-          }
-        />
+          {/* Protected routes */}
+          <Route
+            path="/"
+            element={isAuthenticated ? <ChatPage /> : <Navigate to="/login" replace />}
+          />
 
-        {/* Fallback */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </div>
+          {/* Fallback */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </div>
+    </Suspense>
   );
 }
 

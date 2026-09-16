@@ -14,7 +14,9 @@ export class AppError extends Error {
   }
 }
 
-export const catchAsync = (fn: (req: Request, res: Response, next: NextFunction) => Promise<any>) => {
+export const catchAsync = (
+  fn: (req: Request, res: Response, next: NextFunction) => Promise<any>,
+) => {
   return (req: Request, res: Response, next: NextFunction) => {
     fn(req, res, next).catch(next);
   };
@@ -26,6 +28,18 @@ export const globalErrorHandler = (
   res: Response,
   _next: NextFunction,
 ): void => {
+  if (res.headersSent || res.destroyed) {
+    if (!res.writableEnded) res.end();
+    return;
+  }
+  if ((err as any).type === 'entity.too.large') {
+    res.status(413).json({ success: false, message: 'Message is too large.' });
+    return;
+  }
+  if ((err as any).type === 'entity.parse.failed') {
+    res.status(400).json({ success: false, message: 'Invalid request data.' });
+    return;
+  }
   if (err instanceof AppError) {
     res.status(err.statusCode).json({
       success: false,
@@ -51,7 +65,9 @@ export const globalErrorHandler = (
     res.status(400).json({
       success: false,
       message: 'Validation error',
-      errors: (err as any).errors ? Object.values((err as any).errors).map((e: any) => e.message) : undefined,
+      errors: (err as any).errors
+        ? Object.values((err as any).errors).map((e: any) => e.message)
+        : undefined,
     });
     return;
   }
