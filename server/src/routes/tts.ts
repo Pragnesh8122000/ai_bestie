@@ -28,14 +28,16 @@ router.post(
     const input = schema.parse(req.body);
 
     // Cancel synthesis if the client disconnects (new message, tab closed,
-    // toggle-off). The signal flows into generateAsync's onProgress, which
-    // returns 0 to stop the inference and free the CPU.
+    // toggle-off). Cancel queued inference and discard a native inference
+    // already running; onProgress is disabled because it crashes the addon.
     const ac = new AbortController();
     let clientClosed = false;
-    res.on('close', () => {
+    const onClose = () => {
       clientClosed = true;
       ac.abort();
-    });
+    };
+    res.on('close', onClose);
+    const timeout = setTimeout(() => ac.abort(), 15_000);
 
     try {
       const wav = await synthesize(input.text, ac.signal);
@@ -47,15 +49,17 @@ router.post(
     } catch (err) {
       if (clientClosed || res.destroyed || res.writableEnded) return;
       if (err instanceof AppError && err.statusCode === 503) {
-        // Model unavailable — client falls back to browser speechSynthesis.
+        // Model unavailable or queue full; preserve the client's chosen voice.
         res.status(503).json({ success: false, message: err.message });
         return;
       }
-      // 499 (cancelled) or unexpected failure: treat as 503 so the client
-      // falls back rather than surfacing a hard error mid-conversation.
+      // Missing audio is visible without changing voices mid-conversation.
       res
         .status(503)
-        .json({ success: false, message: 'TTS failed, falling back to browser voice' });
+        .json({ success: false, message: 'Voice audio could not be generated. Please try again.' });
+    } finally {
+      clearTimeout(timeout);
+      res.off('close', onClose);
     }
   }),
 );

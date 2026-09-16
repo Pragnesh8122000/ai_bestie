@@ -2,6 +2,7 @@ import app from './app';
 import { config } from './config';
 import { connectDatabase } from './config/database';
 import { initTts, ttsStatus } from './services/ttsService';
+import mongoose from 'mongoose';
 
 const start = async () => {
   try {
@@ -22,10 +23,26 @@ const start = async () => {
     }
 
     await connectDatabase();
-    app.listen(config.port, () => {
+    const server = app.listen(config.port, () => {
       console.log(`Server running on port ${config.port} in ${config.nodeEnv} mode`);
       console.log(`Health check: http://localhost:${config.port}/api/health`);
     });
+
+    let shuttingDown = false;
+    const shutdown = () => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      const deadline = setTimeout(() => process.exit(1), 10_000);
+      deadline.unref();
+      server.close(() => {
+        void mongoose.disconnect().then(
+          () => process.exit(0),
+          () => process.exit(1),
+        );
+      });
+    };
+    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', shutdown);
 
     // Load the neural TTS model in the background so boot isn't blocked even if
     // the model is large (or absent). When it resolves, log the outcome; voice

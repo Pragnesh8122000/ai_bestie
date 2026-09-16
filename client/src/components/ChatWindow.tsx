@@ -14,9 +14,9 @@ const STATUS_LABEL: Record<'idle' | 'thinking' | 'speaking' | 'listening', strin
 };
 
 const SUGGESTED_PROMPTS = [
-  "What should I do tonight?",
+  'What should I do tonight?',
   "I'm feeling stuck...",
-  "Tell me something fun",
+  'Tell me something fun',
 ];
 
 function clock(iso?: string): string {
@@ -29,23 +29,40 @@ function clock(iso?: string): string {
 }
 
 export default function ChatWindow() {
-  const { activeConversation, avatarState, isStreaming, streamingContent, sendMessage, isLoadingConversation } =
-    useChatStore();
+  const {
+    activeConversation,
+    avatarState,
+    isStreaming,
+    streamingContent,
+    sendMessage,
+    isLoadingConversation,
+    error,
+    openDefaultConversation,
+  } = useChatStore();
   const { personas } = usePersonaStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const persona = personas.find((p) => p.id === activeConversation?.personaId);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({ behavior: isStreaming ? 'auto' : 'smooth' });
   }, [activeConversation?.messages, streamingContent]);
 
   if (!activeConversation) {
     return (
-      <div className="flex flex-1 items-center justify-center px-6">
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6">
         <p className="font-mono text-xs uppercase tracking-[0.2em] text-linen-dim">
           {isLoadingConversation ? '· loading ·' : '· connecting ·'}
         </p>
+        {!isLoadingConversation && error && (
+          <button
+            type="button"
+            onClick={openDefaultConversation}
+            className="rounded-full border border-ember px-4 py-2 text-sm text-ember"
+          >
+            Retry connection
+          </button>
+        )}
       </div>
     );
   }
@@ -54,7 +71,7 @@ export default function ChatWindow() {
   const showEmpty = messages.length === 0 && !isStreaming;
 
   return (
-    <div className="flex flex-1 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {/* Call stage — larger orb, more presence */}
       <div className="flex flex-col items-center gap-3 px-4 pt-6 pb-4 sm:pt-10 sm:pb-6">
         <VoiceOrb state={avatarState} size={220} showGlow />
@@ -69,7 +86,7 @@ export default function ChatWindow() {
       </div>
 
       {/* Transcript */}
-      <div className="flex-1 overflow-y-auto px-4 sm:px-8">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 sm:px-8">
         {showEmpty && (
           <div className="flex h-full min-h-[200px] flex-col items-center justify-center gap-6">
             <p className="max-w-sm text-center font-display text-lg italic text-linen-dim">

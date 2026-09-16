@@ -92,6 +92,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  speech?.stopSpeaking();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -159,7 +161,10 @@ describe('voice consistency', () => {
   });
 
   it('never picks a male voice even when no known female voice exists', async () => {
-    installedVoices = [new FakeVoice('Daniel', 'en-GB'), new FakeVoice('Google UK English Female', 'en-GB')];
+    installedVoices = [
+      new FakeVoice('Daniel', 'en-GB'),
+      new FakeVoice('Google UK English Female', 'en-GB'),
+    ];
     installSpeechSynthesis();
     vi.stubGlobal(
       'fetch',
@@ -214,6 +219,76 @@ describe('voice consistency', () => {
 });
 
 describe('playback serialisation', () => {
+  it('bounds a hung TTS request and lets the following reply start', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url, options) =>
+          new Promise((_resolve, reject) => {
+            options.signal.addEventListener('abort', () =>
+              reject(new DOMException('Aborted', 'AbortError')),
+            );
+          }),
+      ),
+    );
+    await loadFreshModule();
+    speech.beginSpeech();
+    speech.speakChunk('First.');
+    await vi.advanceTimersByTimeAsync(15_020);
+    expect(spoken).toHaveLength(1);
+    speech.beginSpeech();
+    speech.speakChunk('Second.');
+    await vi.advanceTimersByTimeAsync(10);
+    expect(spoken).toHaveLength(2);
+  });
+  it('can start a new reply after stopping audio that never fires ended', async () => {
+    let playCount = 0;
+    class NeverEndsAudio extends FakeAudio {
+      play() {
+        playCount++;
+        return Promise.resolve();
+      }
+    }
+    (globalThis as any).Audio = NeverEndsAudio;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, blob: async () => ({ size: 1024 }) })),
+    );
+    await loadFreshModule();
+    speech.beginSpeech();
+    speech.speakChunk('First.');
+    await flush(10);
+    speech.stopSpeaking();
+    speech.beginSpeech();
+    speech.speakChunk('Second.');
+    await flush(20);
+    expect(playCount).toBe(2);
+    speech.stopSpeaking();
+  });
+
+  it('aborts a pending synthesis fetch when speech is stopped', async () => {
+    let requestSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url, options) => {
+        requestSignal = options?.signal;
+        return new Promise((_resolve, reject) =>
+          requestSignal?.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError')),
+          ),
+        );
+      }),
+    );
+    await loadFreshModule();
+    speech.beginSpeech();
+    speech.speakChunk('First.');
+    await flush(5);
+    speech.stopSpeaking();
+    expect(requestSignal?.aborted).toBe(true);
+    await flush(5);
+    expect(spoken).toHaveLength(0);
+  });
   it('does not swap to a better voice when onvoiceschanged fires mid-reply', async () => {
     // Chrome populates getVoices() asynchronously and fires onvoiceschanged
     // after playback may already have begun. Re-picking then would change the
@@ -322,6 +397,65 @@ describe('playback serialisation', () => {
     expect(states[states.length - 1]).toBe(false);
     // No further audio started after the stop.
     expect(spoken.length).toBe(countAtStop);
+  });
+});
+
+describe('speech recognition lifecycle', () => {
+  function recognition() {
+    const instance: any = {};
+    class Recognition {
+      onresult: any;
+      onend: any;
+      onerror: any;
+      start = vi.fn();
+      stop = vi.fn();
+      abort = vi.fn();
+      constructor() {
+        Object.assign(instance, { recognition: this });
+      }
+    }
+    (globalThis as any).webkitSpeechRecognition = Recognition;
+    return () => instance.recognition;
+  }
+
+  it('does not duplicate final text from cumulative recognition events', async () => {
+    const current = recognition();
+    await loadFreshModule();
+    const pending = speech.listenOnce();
+    current().onresult({ results: [{ isFinal: true, 0: { transcript: 'Hello' } }] });
+    current().onresult({
+      results: [
+        { isFinal: true, 0: { transcript: 'Hello' } },
+        { isFinal: true, 0: { transcript: 'there' } },
+      ],
+    });
+    current().onend();
+    await expect(pending).resolves.toBe('Hello there');
+    delete (globalThis as any).webkitSpeechRecognition;
+  });
+
+  it('settles after its deadline even if the browser never emits onend', async () => {
+    vi.useFakeTimers();
+    const current = recognition();
+    await loadFreshModule();
+    const pending = speech.listenOnce('en-US', undefined, 50);
+    await vi.advanceTimersByTimeAsync(50);
+    await expect(pending).resolves.toBe('');
+    expect(current().abort).toHaveBeenCalled();
+    delete (globalThis as any).webkitSpeechRecognition;
+  });
+
+  it('aborts recognition and drops callbacks when the conversation changes', async () => {
+    const current = recognition();
+    await loadFreshModule();
+    const controller = new AbortController();
+    const pending = speech.listenOnce('en-US', undefined, 8000, controller.signal);
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    controller.abort();
+    await rejected;
+    expect(current().onresult).toBeNull();
+    expect(current().abort).toHaveBeenCalled();
+    delete (globalThis as any).webkitSpeechRecognition;
   });
 });
 
@@ -456,10 +590,14 @@ describe('inter-sentence gap', () => {
     const order = events.filter((e) => e.kind.startsWith('play')).map((e) => `${e.kind}:${e.n}`);
     // Strictly start,end,start,end... — never two overlapping utterances.
     expect(order).toEqual([
-      'play-start:1', 'play-end:1',
-      'play-start:2', 'play-end:2',
-      'play-start:3', 'play-end:3',
-      'play-start:4', 'play-end:4',
+      'play-start:1',
+      'play-end:1',
+      'play-start:2',
+      'play-end:2',
+      'play-start:3',
+      'play-end:3',
+      'play-start:4',
+      'play-end:4',
     ]);
   });
 

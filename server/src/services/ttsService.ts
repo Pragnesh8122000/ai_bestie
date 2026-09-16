@@ -71,9 +71,7 @@ function voiceTable(): { allowed: number[]; fallback: number } {
 export function resolveSid(): number {
   const { allowed, fallback } = voiceTable();
   const sid = config.tts.sid;
-  return typeof sid === 'number' && Number.isInteger(sid) && allowed.includes(sid)
-    ? sid
-    : fallback;
+  return typeof sid === 'number' && Number.isInteger(sid) && allowed.includes(sid) ? sid : fallback;
 }
 
 const VOICE_SID = resolveSid();
@@ -182,7 +180,12 @@ export function ttsStatus(): TtsStatus {
 // sentence at a time is fine for a single-user free deployment; the limiter
 // and this mutex together bound queue depth.
 let chain: Promise<unknown> = Promise.resolve();
+let pendingCount = 0;
+const MAX_PENDING = 8;
 function enqueue(task: () => Promise<GeneratedAudio>): Promise<GeneratedAudio> {
+  if (pendingCount >= MAX_PENDING)
+    return Promise.reject(new AppError('Voice service busy. Please try again.', 503));
+  pendingCount++;
   // Run the task whether the previous one resolved or rejected, so one bad
   // request can't stall the whole queue.
   const result = chain.then(task, task);
@@ -190,14 +193,18 @@ function enqueue(task: () => Promise<GeneratedAudio>): Promise<GeneratedAudio> {
     () => undefined,
     () => undefined,
   );
-  return result;
+  return result.finally(() => {
+    pendingCount--;
+  });
 }
 
 /**
  * Synthesize `text` to a 16-bit mono PCM WAV Buffer. Throws AppError(503) if
- * the model is unavailable. The AbortSignal cancels mid-synthesis.
+ * the model is unavailable. Cancellation skips queued inference and discards
+ * in-flight results; the native progress callback is deliberately disabled.
  */
 export async function synthesize(text: string, signal: AbortSignal): Promise<Buffer> {
+  if (signal.aborted) throw new AppError('TTS cancelled', 499);
   await initTts();
   if (!tts) throw new AppError('TTS unavailable', 503);
 
@@ -205,17 +212,18 @@ export async function synthesize(text: string, signal: AbortSignal): Promise<Buf
   if (!trimmed) throw new AppError('Nothing to synthesize', 400);
   if (signal.aborted) throw new AppError('TTS cancelled', 499);
 
-  const audio = await enqueue(() =>
+  const audio = await enqueue(() => {
+    if (signal.aborted) throw new AppError('TTS cancelled', 499);
     // No onProgress: see the module header — the addon's progress path crashes
     // the process. Every chunk uses the same pinned female speaker id.
-    tts!.generateAsync({
+    return tts!.generateAsync({
       text: trimmed,
       generationConfig: new GenerationConfig({
         sid: VOICE_SID,
         speed: VOICE_SPEED,
       }),
-    }),
-  );
+    });
+  });
 
   if (signal.aborted) throw new AppError('TTS cancelled', 499);
   return encodeWav(audio.samples, audio.sampleRate);

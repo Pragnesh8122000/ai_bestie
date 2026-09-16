@@ -49,7 +49,7 @@
     │  - Users  │            │  OpenRouter           │
     │  - Personas│           │  (free models,        │
     │  - Convos  │            │   fallback)           │
-    │  (TTL 48h)│            └──────────────────────┘
+    │ (retained)│            └──────────────────────┘
     └───────────┘
 ```
 

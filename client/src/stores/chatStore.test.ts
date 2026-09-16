@@ -19,7 +19,7 @@ vi.mock('../api/conversation', () => ({
   },
 }));
 
-import { useChatStore } from './chatStore';
+import { useChatStore, resetChatSession } from './chatStore';
 import { usePersonaStore } from './personaStore';
 import { conversationApi } from '../api/conversation';
 import { stopSpeaking } from '../utils/speech';
@@ -66,7 +66,9 @@ beforeEach(() => {
 
 describe('fetchConversations', () => {
   it('loads the first page and records hasMore', async () => {
-    api.list.mockResolvedValue({ data: { data: { conversations: [conversation('a')], hasMore: true } } });
+    api.list.mockResolvedValue({
+      data: { data: { conversations: [conversation('a')], hasMore: true } },
+    });
 
     await useChatStore.getState().fetchConversations();
 
@@ -77,7 +79,10 @@ describe('fetchConversations', () => {
 
   it('appends with a cursor and de-dupes overlapping ids', async () => {
     useChatStore.setState({
-      conversations: [conversation('a'), conversation('b', { lastMessageAt: '2026-08-18T08:00:00.000Z' })],
+      conversations: [
+        conversation('a'),
+        conversation('b', { lastMessageAt: '2026-08-18T08:00:00.000Z' }),
+      ],
     });
     api.list.mockResolvedValue({
       data: { data: { conversations: [conversation('b'), conversation('c')], hasMore: false } },
@@ -85,7 +90,7 @@ describe('fetchConversations', () => {
 
     await useChatStore.getState().fetchConversations({ append: true });
 
-    expect(api.list).toHaveBeenCalledWith({ before: '2026-08-18T08:00:00.000Z' });
+    expect(api.list).toHaveBeenCalledWith({ before: '2026-08-18T08:00:00.000Z', beforeId: 'b' });
     expect(useChatStore.getState().conversations.map((c) => c.id)).toEqual(['a', 'b', 'c']);
   });
 
@@ -100,6 +105,40 @@ describe('fetchConversations', () => {
 });
 
 describe('switchConversation', () => {
+  it('does not let an older default load overwrite a deliberate switch', async () => {
+    let resolveDefault!: (value: unknown) => void;
+    api.getDefault.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveDefault = resolve;
+        }),
+    );
+    const defaultLoad = useChatStore.getState().openDefaultConversation();
+    api.get.mockResolvedValue(detail('b'));
+    await useChatStore.getState().switchConversation('b');
+    resolveDefault({
+      data: {
+        data: { conversation: { ...conversation('a'), messages: [] }, persona: { id: 'p1' } },
+      },
+    });
+    await defaultLoad;
+    expect(useChatStore.getState().activeConversation?.id).toBe('b');
+  });
+
+  it('does not restore private conversations after a session reset', async () => {
+    let resolveList!: (value: unknown) => void;
+    api.list.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveList = resolve;
+        }),
+    );
+    const request = useChatStore.getState().fetchConversations();
+    resetChatSession();
+    resolveList({ data: { data: { conversations: [conversation('old-user')], hasMore: false } } });
+    await request;
+    expect(useChatStore.getState().conversations).toEqual([]);
+  });
   it('loads the target and marks it active', async () => {
     api.get.mockResolvedValue(detail('b'));
 
@@ -112,7 +151,11 @@ describe('switchConversation', () => {
   });
 
   it('stops in-flight speech when switching mid-stream', async () => {
-    useChatStore.setState({ isStreaming: true, streamingContent: 'partial', avatarState: 'speaking' });
+    useChatStore.setState({
+      isStreaming: true,
+      streamingContent: 'partial',
+      avatarState: 'speaking',
+    });
     api.get.mockResolvedValue(detail('b'));
 
     await useChatStore.getState().switchConversation('b');
@@ -125,7 +168,12 @@ describe('switchConversation', () => {
 
   it('discards a stale response when switched again mid-load', async () => {
     let resolveA: (value: unknown) => void = () => {};
-    api.get.mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve; }));
+    api.get.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveA = resolve;
+        }),
+    );
     api.get.mockImplementationOnce(() => Promise.resolve(detail('b')));
 
     const first = useChatStore.getState().switchConversation('a');
@@ -144,7 +192,12 @@ describe('switchConversation', () => {
     useChatStore.setState({ conversations: [conversation('gone')] });
     api.get.mockRejectedValue({ response: { status: 404 } });
     api.getDefault.mockResolvedValue({
-      data: { data: { conversation: { ...conversation('fresh'), messages: [] }, persona: { id: 'p1', name: 'Sam', archetype: 'friend', avatarId: 'a', traits: {} } } },
+      data: {
+        data: {
+          conversation: { ...conversation('fresh'), messages: [] },
+          persona: { id: 'p1', name: 'Sam', archetype: 'friend', avatarId: 'a', traits: {} },
+        },
+      },
     });
 
     await useChatStore.getState().switchConversation('gone');
@@ -174,7 +227,9 @@ describe('startNewConversation', () => {
       activePersonaId: 'p1',
     });
     api.create.mockResolvedValue({
-      data: { data: { conversation: { ...conversation('new'), title: 'New Conversation', messages: [] } } },
+      data: {
+        data: { conversation: { ...conversation('new'), title: 'New Conversation', messages: [] } },
+      },
     });
     useChatStore.setState({ isSidebarOpen: true });
 
@@ -211,7 +266,9 @@ describe('renameConversation', () => {
       activeConversation: { ...conversation('a'), messages: [] },
       activeConversationId: 'a',
     });
-    api.rename.mockResolvedValue({ data: { data: { conversation: conversation('a', { title: 'Lisbon' }) } } });
+    api.rename.mockResolvedValue({
+      data: { data: { conversation: conversation('a', { title: 'Lisbon' }) } },
+    });
 
     await useChatStore.getState().renameConversation('a', 'Lisbon');
 
@@ -277,7 +334,12 @@ describe('deleteConversation', () => {
     });
     api.delete.mockResolvedValue({ data: { success: true } });
     api.getDefault.mockResolvedValue({
-      data: { data: { conversation: { ...conversation('fresh'), messages: [] }, persona: { id: 'p1', name: 'Sam', archetype: 'friend', avatarId: 'a', traits: {} } } },
+      data: {
+        data: {
+          conversation: { ...conversation('fresh'), messages: [] },
+          persona: { id: 'p1', name: 'Sam', archetype: 'friend', avatarId: 'a', traits: {} },
+        },
+      },
     });
 
     await useChatStore.getState().deleteConversation('a');
@@ -287,7 +349,10 @@ describe('deleteConversation', () => {
   });
 
   it('treats a 404 as already-deleted', async () => {
-    useChatStore.setState({ conversations: [conversation('a'), conversation('b')], activeConversationId: 'b' });
+    useChatStore.setState({
+      conversations: [conversation('a'), conversation('b')],
+      activeConversationId: 'b',
+    });
     api.delete.mockRejectedValue({ response: { status: 404 } });
 
     await useChatStore.getState().deleteConversation('a');

@@ -44,7 +44,8 @@ beforeEach(() => {
     matches: false,
     media: query,
     addEventListener: (_: string, cb: (e: MediaQueryListEvent) => void) => mediaListeners.add(cb),
-    removeEventListener: (_: string, cb: (e: MediaQueryListEvent) => void) => mediaListeners.delete(cb),
+    removeEventListener: (_: string, cb: (e: MediaQueryListEvent) => void) =>
+      mediaListeners.delete(cb),
   })) as any;
 
   vi.clearAllMocks();
@@ -64,6 +65,7 @@ beforeEach(() => {
     error: null,
     isSidebarOpen: false,
     isLoadingList: false,
+    isLoadingConversation: false,
     isStreaming: false,
   });
   useAuthStore.setState({ user: { id: 'u1', email: 'a@b.c', name: 'Tester' } as any });
@@ -78,6 +80,19 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('ChatPage drawer', () => {
+  it('does not bootstrap the default conversation while switching to another history entry', async () => {
+    render(<ChatPage />);
+    act(() => {
+      useChatStore.setState({
+        activeConversation: null,
+        activeConversationId: 'b',
+        isLoadingConversation: true,
+      });
+    });
+    await act(async () => {});
+    expect(api.getDefault).not.toHaveBeenCalled();
+  });
+
   it('shows the active conversation title in the header', async () => {
     render(<ChatPage />);
     expect(await screen.findByRole('heading', { name: 'Lisbon trip' })).toBeInTheDocument();

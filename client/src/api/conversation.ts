@@ -30,6 +30,7 @@ interface ListParams {
   limit?: number;
   /** ISO timestamp cursor — returns conversations older than this. */
   before?: string;
+  beforeId?: string;
 }
 
 interface ConversationDetailResponse {
@@ -66,20 +67,17 @@ interface CreateConversationInput {
 }
 
 export const conversationApi = {
-  list: (params?: ListParams) =>
-    apiClient.get<ConversationsResponse>('/conversations', { params }),
+  list: (params?: ListParams) => apiClient.get<ConversationsResponse>('/conversations', { params }),
 
-  getDefault: () =>
-    apiClient.get<DefaultConversationResponse>('/conversations/default'),
+  getDefault: () => apiClient.get<DefaultConversationResponse>('/conversations/default'),
 
-  get: (id: string) =>
-    apiClient.get<ConversationDetailResponse>(`/conversations/${id}`),
+  get: (id: string) => apiClient.get<ConversationDetailResponse>(`/conversations/${id}`),
 
   create: (data: CreateConversationInput) =>
-    apiClient.post<{ success: boolean; data: { conversation: Conversation & { messages: Message[] } } }>(
-      '/conversations',
-      data,
-    ),
+    apiClient.post<{
+      success: boolean;
+      data: { conversation: Conversation & { messages: Message[] } };
+    }>('/conversations', data),
 
   rename: (id: string, title: string) =>
     apiClient.patch<{ success: boolean; data: { conversation: Conversation } }>(

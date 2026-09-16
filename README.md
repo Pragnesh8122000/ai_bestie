@@ -81,7 +81,7 @@ ai-bestie/
 │   │   ├── models/
 │   │   │   ├── User.ts        # Email/password + bcrypt pre-save
 │   │   │   ├── Persona.ts     # Archetype + traits + getSystemPrompt()
-│   │   │   └── Conversation.ts # Messages array + TTL + helpers
+│   │   │   └── Conversation.ts # Persistent history + soft deletion + helpers
 │   │   ├── routes/
 │   │   │   ├── auth.ts        # Register/login/logout/me
 │   │   │   ├── avatars.ts     # List + filter avatars
@@ -374,11 +374,15 @@ See [docs/persona-system.md](docs/persona-system.md) for the full 5-layer prompt
 | `TTS_MODEL_VERSION` | No | Kokoro release: `v1_0` (default, 53 speakers) or `v0_19` (legacy, English-only). Also selects the default model path and the valid `TTS_SID` range. |
 | `TTS_MODEL_PATH` | No | Path to the Kokoro model dir (default: `server/.tts-models/kokoro-multi-lang-v1_0`). Override only for a custom/int8 model. |
 | `TTS_SID` | No | Kokoro speaker id (v1.0 default: `3` = af_heart). English female ids: 0=af_alloy, 1=af_aoede, 2=af_bella, 3=af_heart, 5=af_kore, 6=af_nicole, 7=af_nova, 9=af_sarah, 20-23 = British. |
-| `TTS_SPEED` | No | Speaking rate (default: `0.95`, clamped to 0.7-1.3). Below 1.0 sounds more relaxed and less clipped. |
+| `TTS_SPEED` | No | Neural synthesis rate (default: `0.95`, clamped to 0.7-1.3). The client additionally plays audio at `0.7x` speed. |
 | `TTS_MAX_CHARS` | No | Max characters per TTS request (default: 1000) |
 | `CLIENT_URL` | No | Frontend URL for CORS (default: http://localhost:5173) |
 
 > *At least one of `GEMINI_API_KEY` or `OPENROUTER_API_KEY` is required for chat to work. Gemini is tried first; OpenRouter is the fallback.
+
+Voice replies play at 70% of the previous speed. Neural audio uses `0.7x`
+playback with pitch preserved; browser voice uses a rate of `0.686` (previously
+`0.98`).
 
 ## 📄 License
 

@@ -4,6 +4,7 @@ import mongoose, { Document, Schema, Types } from 'mongoose';
 export const PREVIEW_MAX_LENGTH = 120;
 
 export interface IMessage {
+  _id?: Types.ObjectId;
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
@@ -56,7 +57,7 @@ const messageSchema = new Schema<IMessage>(
       default: 0,
     },
   },
-  { _id: false },
+  { _id: true },
 );
 
 const conversationSchema = new Schema<IConversation>(

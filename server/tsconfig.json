@@ -31,6 +31,7 @@
     "dist",
     "__tests__",
     "src/**/*.test.ts",
-    "src/scripts/verify-voice.mts"
+    "src/scripts/verify-voice.mts",
+    "src/scripts/verify-readiness.mts"
   ]
 }

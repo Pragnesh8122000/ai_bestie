@@ -15,7 +15,7 @@
 │ activeP.  │      │ avatarId  │      │ title         │
 │ prefs     │      │ traits{}  │      │ messages[]    │
 └──────────┘      └──────────┘      │ lastMessageAt │
-                                       │ expiresAt    │
+                                       │ isArchived   │
                                        └──────────────┘
 
 Only three collections: User, Persona, Conversation. There are no
@@ -117,14 +117,17 @@ SemanticMemory / EpisodicMemory collections (that memory design was removed).
 | `messages.timestamp` | Date | default: Date.now | When sent |
 | `messages.tokenCount` | Number | default: 0 | Token count (reserved for future use) |
 | `lastMessageAt` | Date | default: Date.now | Last activity time |
-| `expiresAt` | Date | default: 48h from now | TTL index |
+| `titleIsCustom` | Boolean | default: false | Preserves manual renames |
+| `messageCount` | Number | default: 0 | Summary count without reading history |
+| `lastMessagePreview` | String | maximum: 120 characters | Summary snippet |
+| `isArchived` | Boolean | default: false | Soft deletion |
+| `deletedAt` | Date/null | default: null | Deletion timestamp |
 | `createdAt` | Date | auto | Creation timestamp |
 | `updatedAt` | Date | auto | Last update timestamp |
 
-**Important:** Message sub-documents use `_id: false` to reduce document size.
-
-**Hooks:**
-- TTL index on `expiresAt` — MongoDB auto-deletes conversations after 48 hours
+**Important:** New message sub-documents have `_id` values. The SSE `done`
+message ID matches the persisted assistant message. Historical messages may
+lack IDs. The schema has no TTL index.
 
 **Methods:**
 - `addMessage(role, content, tokenCount?)` — Push a message with defaults
@@ -135,8 +138,7 @@ SemanticMemory / EpisodicMemory collections (that memory design was removed).
 > conversation can't clobber each other.
 
 **Indexes:**
-- `{ userId: 1, lastMessageAt: -1 }` — for listing user's conversations sorted by recent
-- `{ expiresAt: 1 }` — TTL index for auto-expiration
+- `{ userId: 1, isArchived: 1, lastMessageAt: -1 }` — active history summaries
 
 **Example document:**
 ```json
@@ -160,7 +162,7 @@ SemanticMemory / EpisodicMemory collections (that memory design was removed).
     }
   ],
   "lastMessageAt": "2024-01-15T10:31:05Z",
-  "expiresAt": "2024-01-17T10:30:00Z",
+  "isArchived": false,
   "createdAt": "2024-01-15T10:30:00Z"
 }
 ```
@@ -181,15 +183,12 @@ actually ships.
 
 ## Data Lifecycle
 
-### Conversation TTL
+### Conversation retention
 
-Conversations auto-expire 48 hours after the last message via the MongoDB TTL
-index on `expiresAt` (reset to `now + 48h` on each new message). This keeps the
-database footprint small — important for the free-tier M0 512MB cluster. There
-is no extraction into any other collection.
-
-```
-Create conversation → expiresAt = now + 48h
-Each message: lastMessageAt = now, expiresAt = now + 48h (atomic $set)
-MongoDB TTL thread deletes expired documents every ~60 seconds
-```
+History is permanent until soft deletion, which sets `isArchived` and `deletedAt`
+and hides the conversation from normal reads and writes. The old `expiresAt`
+field is unused. Older databases require the existing multi-conversation
+migration to remove the TTL index and backfill summary fields; changing the
+Mongoose schema does not remove a live index. Monitor storage growth and back
+up before migration. Already expired documents cannot be recovered without a
+backup.

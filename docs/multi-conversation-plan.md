@@ -1,6 +1,9 @@
 # Multi-Conversation Management — Implementation Plan
 
-Status: plan only. No code written yet.
+Status: implemented. This document preserves the original design and baseline
+observations; they are not a description of today's schema. See
+[production-readiness.md](./production-readiness.md) for the latest stabilization
+work, verification results, and pending hosted checks.
 
 ## 0. Corrections to the starting assumptions
 

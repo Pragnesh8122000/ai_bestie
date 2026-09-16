@@ -1,12 +1,15 @@
 import { Response } from 'express';
+import { Types } from 'mongoose';
 import { config } from '../config/index';
 import { Conversation, toPreview } from '../models/Conversation';
 import { Persona } from '../models/Persona';
 import { assembleSystemPrompt, ensureDefaultPersona } from './personaService';
 import { streamChat } from './llmService';
+import { AppError } from '../utils/errors';
 
 const STREAM_TIMEOUT_MS = 30_000; // abort upstream if no completion by 30s
 const HEARTBEAT_MS = 15_000; // SSE keepalive to survive idle proxy/CDN drops
+const activeStreams = new Set<string>();
 
 /**
  * Normalize a (lean) conversation doc into the shape the client expects:
@@ -76,12 +79,32 @@ export async function handleChatStream(
   userMessage: string,
   res: Response,
 ): Promise<void> {
+  const key = `${userId}/${conversationId}`;
+  if (activeStreams.has(key))
+    throw new AppError('A reply is already in progress for this conversation.', 409);
+  activeStreams.add(key);
+  try {
+    await runChatStream(userId, conversationId, userMessage, res);
+  } finally {
+    activeStreams.delete(key);
+  }
+}
+
+async function runChatStream(
+  userId: string,
+  conversationId: string,
+  userMessage: string,
+  res: Response,
+): Promise<void> {
   // 1. Load conversation
-  const conversation = await Conversation.findOne({
-    _id: conversationId,
-    userId,
-    isArchived: false,
-  });
+  const conversation = await Conversation.findOne(
+    {
+      _id: conversationId,
+      userId,
+      isArchived: false,
+    },
+    'personaId',
+  );
 
   if (!conversation) {
     res.status(404).json({ success: false, message: 'Conversation not found' });
@@ -89,7 +112,7 @@ export async function handleChatStream(
   }
 
   // 2. Load persona and assemble system prompt
-  const persona = await Persona.findById(conversation.personaId);
+  const persona = await Persona.findOne({ _id: conversation.personaId, userId });
   if (!persona) {
     res.status(404).json({ success: false, message: 'Persona not found' });
     return;
@@ -123,7 +146,10 @@ export async function handleChatStream(
   );
 
   // 5. Re-read recent messages for the context window.
-  const refreshed = await Conversation.findOne({ _id: conversation._id, userId });
+  const refreshed = await Conversation.findOne(
+    { _id: conversation._id, userId },
+    { messages: { $slice: -20 } },
+  );
   const recentMessages = (refreshed?.getRecentMessages(20) || [])
     .filter((m) => m.role === 'user' || m.role === 'assistant')
     .map((m) => ({
@@ -183,11 +209,18 @@ export async function handleChatStream(
     // Persist assistant message atomically
     if (fullResponse) {
       const endNow = new Date();
-      await Conversation.updateOne(
-        { _id: conversation._id, userId },
+      const messageId = new Types.ObjectId();
+      const persisted = await Conversation.updateOne(
+        { _id: conversation._id, userId, isArchived: false },
         {
           $push: {
-            messages: { role: 'assistant', content: fullResponse, timestamp: endNow, tokenCount: 0 },
+            messages: {
+              _id: messageId,
+              role: 'assistant',
+              content: fullResponse,
+              timestamp: endNow,
+              tokenCount: 0,
+            },
           },
           $inc: { messageCount: 1 },
           $set: {
@@ -196,11 +229,12 @@ export async function handleChatStream(
           },
         },
       );
+      if (!persisted.matchedCount) throw new Error('Conversation no longer available');
+      write(`data: ${JSON.stringify({ type: 'state', state: 'idle' })}\n\n`);
+      write(`data: ${JSON.stringify({ type: 'done', messageId: messageId.toHexString() })}\n\n`);
+    } else {
+      throw new Error('Empty reply');
     }
-
-    // Send done event
-    write(`data: ${JSON.stringify({ type: 'state', state: 'idle' })}\n\n`);
-    write(`data: ${JSON.stringify({ type: 'done', messageId: `msg_${Date.now()}` })}\n\n`);
   } catch (error) {
     clearTimeout(timeout);
     const aborted = ac.signal.aborted;
@@ -242,6 +276,9 @@ export async function createConversation(
   avatarId: string,
   title?: string,
 ) {
+  if (!Types.ObjectId.isValid(personaId) || !(await Persona.findOne({ _id: personaId, userId }))) {
+    throw new AppError('Persona not found', 404);
+  }
   const conversation = await Conversation.create({
     userId,
     personaId,
@@ -267,17 +304,26 @@ const LIST_MAX_LIMIT = 50;
  */
 export async function listConversations(
   userId: string,
-  opts: { limit?: number; before?: Date } = {},
+  opts: { limit?: number; before?: Date; beforeId?: string } = {},
 ): Promise<{ conversations: ConversationSummary[]; hasMore: boolean }> {
   const limit = Math.min(Math.max(opts.limit ?? LIST_DEFAULT_LIMIT, 1), LIST_MAX_LIMIT);
 
   const filter: Record<string, unknown> = { userId, isArchived: false };
-  if (opts.before) filter.lastMessageAt = { $lt: opts.before };
+  if (opts.before) {
+    if (opts.beforeId) {
+      filter.$or = [
+        { lastMessageAt: { $lt: opts.before } },
+        { lastMessageAt: opts.before, _id: { $lt: new Types.ObjectId(opts.beforeId) } },
+      ];
+    } else filter.lastMessageAt = { $lt: opts.before };
+  }
 
   // Over-fetch by one to detect a further page without a second count query.
   const docs = await Conversation.find(filter)
-    .select('title titleIsCustom lastMessageAt createdAt avatarId personaId messageCount lastMessagePreview')
-    .sort({ lastMessageAt: -1 })
+    .select(
+      'title titleIsCustom lastMessageAt createdAt avatarId personaId messageCount lastMessagePreview',
+    )
+    .sort({ lastMessageAt: -1, _id: -1 })
     .limit(limit + 1)
     .lean();
 
@@ -319,7 +365,10 @@ export async function renameConversation(userId: string, conversationId: string,
  * Soft rather than hard so an in-flight stream holding this document can
  * finish writing without hitting a vanished record.
  */
-export async function archiveConversation(userId: string, conversationId: string): Promise<boolean> {
+export async function archiveConversation(
+  userId: string,
+  conversationId: string,
+): Promise<boolean> {
   const result = await Conversation.updateOne(
     { _id: conversationId, userId, isArchived: false },
     { $set: { isArchived: true, deletedAt: new Date() } },
