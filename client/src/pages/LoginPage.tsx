@@ -8,7 +8,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const { login, isLoading, error, clearError } = useAuthStore();
+  const { login, isLoading, error, clearError, enterGuest } = useAuthStore();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: FormEvent) => {
@@ -19,6 +19,11 @@ export default function LoginPage() {
     } catch {
       // Error is set in the store
     }
+  };
+
+  const handleGuest = () => {
+    enterGuest();
+    navigate('/');
   };
 
   return (
@@ -142,6 +147,14 @@ export default function LoginPage() {
           Make a bestie
         </Link>
       </p>
+
+      <button
+        type="button"
+        onClick={handleGuest}
+        className="mt-4 font-mono text-[12px] uppercase tracking-[0.18em] text-linen-dim/70 underline decoration-dotted underline-offset-4 transition-colors hover:text-linen-dim"
+      >
+        Continue as guest
+      </button>
 
       <div className="mt-10 flex items-center gap-4 font-mono text-[10px] uppercase tracking-[0.14em] text-linen-dim/60">
         <span className="flex items-center gap-1.5">

@@ -6,12 +6,19 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
+  // Guest mode is a purely client-side, in-memory flag (Option A: no guest
+  // token or session is ever issued). It grants no API access by itself —
+  // every write endpoint still requires a real `requireAuth` cookie, so a
+  // tampered or forged client can never turn this flag into a real session.
+  isGuest: boolean;
 
   initialize: () => Promise<void>;
   register: (data: RegisterInput) => Promise<void>;
   login: (data: LoginInput) => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
+  enterGuest: () => void;
+  exitGuest: () => void;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -19,6 +26,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   isAuthenticated: false,
   isLoading: true,
   error: null,
+  isGuest: false,
 
   initialize: async () => {
     try {
@@ -41,6 +49,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       set({
         user: response.data.data.user,
         isAuthenticated: true,
+        isGuest: false,
         isLoading: false,
       });
     } catch (error: any) {
@@ -57,6 +66,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       set({
         user: response.data.data.user,
         isAuthenticated: true,
+        isGuest: false,
         isLoading: false,
       });
     } catch (error: any) {
@@ -70,11 +80,14 @@ export const useAuthStore = create<AuthState>((set) => ({
     try {
       await authApi.logout();
     } finally {
-      set({ user: null, isAuthenticated: false, isLoading: false });
+      set({ user: null, isAuthenticated: false, isGuest: false, isLoading: false });
     }
   },
 
   clearError: () => set({ error: null }),
+
+  enterGuest: () => set({ isGuest: true, isAuthenticated: false, user: null }),
+  exitGuest: () => set({ isGuest: false }),
 }));
 
 // Listen for 401 events from the axios interceptor

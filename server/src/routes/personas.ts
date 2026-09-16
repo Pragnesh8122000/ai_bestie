@@ -8,13 +8,14 @@ import { createPersonaSchema, updatePersonaSchema } from '../validations/persona
 
 const router = Router();
 
-// All persona routes require authentication
-router.use(requireAuth);
-
-// GET /api/personas/archetypes — list available archetypes
+// GET /api/personas/archetypes — list available archetypes (public: guests can
+// browse archetypes without signing in, per the guest read-only mode)
 router.get('/archetypes', (_req, res) => {
   res.json({ success: true, data: { archetypes: getArchetypes() } });
 });
+
+// Every other persona route is user-owned data and requires authentication
+router.use(requireAuth);
 
 // GET /api/personas — list current user's personas
 router.get(
