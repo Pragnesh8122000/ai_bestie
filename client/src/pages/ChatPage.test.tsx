@@ -26,13 +26,19 @@ vi.mock('../api/conversation', () => ({
   },
 }));
 
+vi.mock('../api/persona', () => ({
+  personaApi: { getArchetypes: vi.fn() },
+}));
+
 import ChatPage from './ChatPage';
 import { useChatStore } from '../stores/chatStore';
 import { useAuthStore } from '../stores/authStore';
 import { usePersonaStore } from '../stores/personaStore';
 import { conversationApi } from '../api/conversation';
+import { personaApi } from '../api/persona';
 
 const api = conversationApi as unknown as Record<string, ReturnType<typeof vi.fn>>;
+const personaApiMock = personaApi as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
 // jsdom implements neither of these; ChatWindow autoscrolls on mount.
 Element.prototype.scrollIntoView = vi.fn();
@@ -71,8 +77,12 @@ beforeEach(() => {
   usePersonaStore.setState({
     personas: [{ id: 'p1', name: 'Sam', archetype: 'friend', avatarId: 'a' } as any],
     activePersonaId: 'p1',
+    archetypes: [],
   });
   api.list.mockResolvedValue({ data: { data: { conversations: [conversation], hasMore: false } } });
+  personaApiMock.getArchetypes.mockResolvedValue({
+    data: { data: { archetypes: [{ type: 'friend', displayName: 'The Friend', corePurpose: '', defaultTraits: {}, traitRanges: {} }] } },
+  });
   document.body.style.overflow = '';
 });
 

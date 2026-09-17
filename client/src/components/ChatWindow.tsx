@@ -29,10 +29,17 @@ function clock(iso?: string): string {
 export default function ChatWindow() {
   const { activeConversation, avatarState, isStreaming, streamingContent, sendMessage, isLoadingConversation } =
     useChatStore();
-  const { personas } = usePersonaStore();
+  const { personas, archetypes, fetchArchetypes } = usePersonaStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const persona = personas.find((p) => p.id === activeConversation?.personaId);
+  const archetypeLabel = persona
+    ? archetypes.find((a) => a.type === persona.archetype)?.displayName
+    : undefined;
+
+  useEffect(() => {
+    fetchArchetypes();
+  }, [fetchArchetypes]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -60,6 +67,11 @@ export default function ChatWindow() {
           <p className="font-display text-3xl font-semibold text-linen sm:text-4xl">
             {persona?.name || 'Sam'}
           </p>
+          {archetypeLabel && (
+            <p className="mt-1 font-mono text-[11px] uppercase tracking-[0.18em] text-linen-dim/70">
+              {archetypeLabel}
+            </p>
+          )}
           <p className="mt-2 font-mono text-[12px] uppercase tracking-[0.22em] text-linen-dim">
             {STATUS_LABEL[avatarState]}
           </p>

@@ -7,6 +7,8 @@ import { usePersonaStore } from '../stores/personaStore';
 export default function CreatePersonaPage() {
   const navigate = useNavigate();
   const createPersona = usePersonaStore((s) => s.createPersona);
+  const archetypes = usePersonaStore((s) => s.archetypes);
+  const fetchArchetypes = usePersonaStore((s) => s.fetchArchetypes);
 
   const [avatars, setAvatars] = useState<Avatar[]>([]);
   const [isLoadingAvatars, setIsLoadingAvatars] = useState(true);
@@ -36,6 +38,21 @@ export default function CreatePersonaPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    fetchArchetypes();
+  }, [fetchArchetypes]);
+
+  const getArchetypeLabel = (category: string) =>
+    archetypes.find((a) => a.type === category)?.displayName ??
+    `${category.charAt(0).toUpperCase()}${category.slice(1)}`;
+
+  const categoryOrder = Array.from(new Set(avatars.map((a) => a.category)));
+  const avatarsByCategory = categoryOrder.map((category) => ({
+    category,
+    label: getArchetypeLabel(category),
+    avatars: avatars.filter((a) => a.category === category),
+  }));
 
   const selectedAvatar = avatars.find((a) => a.id === selectedAvatarId) ?? null;
 
@@ -90,44 +107,49 @@ export default function CreatePersonaPage() {
         )}
 
         {!isLoadingAvatars && !loadError && (
-          <div
-            role="radiogroup"
-            aria-label="Choose an avatar"
-            className="grid grid-cols-3 gap-4 sm:grid-cols-4"
-          >
-            {avatars.map((avatar) => {
-              const isSelected = avatar.id === selectedAvatarId;
-              return (
-                <button
-                  key={avatar.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={isSelected}
-                  onClick={() => handleSelect(avatar)}
-                  className={`group flex flex-col items-center gap-2 rounded-3xl border p-3 transition-all duration-150 active:scale-95 ${
-                    isSelected
-                      ? 'border-ember bg-ember/10 shadow-lg shadow-ember/10'
-                      : 'border-line/60 hover:border-line hover:bg-clay/20'
-                  }`}
-                >
-                  <span className="aspect-square w-full overflow-hidden rounded-2xl bg-clay/40">
-                    <img
-                      src={avatar.src}
-                      alt=""
-                      className="h-full w-full object-cover"
-                      draggable={false}
-                    />
-                  </span>
-                  <span
-                    className={`truncate font-sans text-xs font-medium ${
-                      isSelected ? 'text-ember' : 'text-linen-dim'
-                    }`}
-                  >
-                    {avatar.name}
-                  </span>
-                </button>
-              );
-            })}
+          <div role="radiogroup" aria-label="Choose an avatar" className="space-y-8">
+            {avatarsByCategory.map(({ category, label, avatars: categoryAvatars }) => (
+              <div key={category}>
+                <h2 className="mb-3 font-mono text-[11px] uppercase tracking-[0.18em] text-linen-dim">
+                  {label}
+                </h2>
+                <div className="grid grid-cols-3 gap-4 sm:grid-cols-4">
+                  {categoryAvatars.map((avatar) => {
+                    const isSelected = avatar.id === selectedAvatarId;
+                    return (
+                      <button
+                        key={avatar.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={isSelected}
+                        onClick={() => handleSelect(avatar)}
+                        className={`group flex flex-col items-center gap-2 rounded-3xl border p-3 transition-all duration-150 active:scale-95 ${
+                          isSelected
+                            ? 'border-ember bg-ember/10 shadow-lg shadow-ember/10'
+                            : 'border-line/60 hover:border-line hover:bg-clay/20'
+                        }`}
+                      >
+                        <span className="aspect-square w-full overflow-hidden rounded-2xl bg-clay/40">
+                          <img
+                            src={avatar.src}
+                            alt=""
+                            className="h-full w-full object-cover"
+                            draggable={false}
+                          />
+                        </span>
+                        <span
+                          className={`truncate font-sans text-xs font-medium ${
+                            isSelected ? 'text-ember' : 'text-linen-dim'
+                          }`}
+                        >
+                          {avatar.name}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
@@ -144,6 +166,9 @@ export default function CreatePersonaPage() {
                 <p className="truncate font-display text-xl text-linen">
                   {name || selectedAvatar.name}
                 </p>
+                <span className="mt-1 inline-block rounded-full border border-line/60 bg-clay/20 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-linen-dim">
+                  {getArchetypeLabel(selectedAvatar.category)}
+                </span>
               </div>
               <button
                 type="button"

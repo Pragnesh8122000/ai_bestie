@@ -14,22 +14,36 @@ vi.mock('../api/avatar', () => ({
   avatarApi: { list: vi.fn() },
 }));
 
+vi.mock('../api/persona', () => ({
+  personaApi: { getArchetypes: vi.fn() },
+}));
+
 import CreatePersonaPage from './CreatePersonaPage';
 import { avatarApi } from '../api/avatar';
+import { personaApi } from '../api/persona';
 import { usePersonaStore } from '../stores/personaStore';
 
 const api = avatarApi as unknown as Record<string, ReturnType<typeof vi.fn>>;
+const personaApiMock = personaApi as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
 const avatars = [
   { id: 'mentor-male-01', name: 'Marcus', src: '/avatars/mentor-male-01.svg', category: 'mentor' },
   { id: 'friend-male-01', name: 'Jake', src: '/avatars/friend-male-01.svg', category: 'friend' },
 ];
 
+const archetypes = [
+  { type: 'mentor', displayName: 'The Mentor', corePurpose: '', defaultTraits: {}, traitRanges: {} },
+  { type: 'friend', displayName: 'The Friend', corePurpose: '', defaultTraits: {}, traitRanges: {} },
+  { type: 'therapist', displayName: 'The Therapist', corePurpose: '', defaultTraits: {}, traitRanges: {} },
+  { type: 'coach', displayName: 'The Coach', corePurpose: '', defaultTraits: {}, traitRanges: {} },
+];
+
 beforeEach(() => {
   vi.clearAllMocks();
   navigateMock.mockClear();
   api.list.mockResolvedValue({ data: { data: { avatars } } });
-  usePersonaStore.setState({ personas: [], activePersonaId: null, error: null });
+  personaApiMock.getArchetypes.mockResolvedValue({ data: { data: { archetypes } } });
+  usePersonaStore.setState({ personas: [], activePersonaId: null, error: null, archetypes: [] });
 });
 
 afterEach(cleanup);
@@ -39,6 +53,31 @@ describe('CreatePersonaPage', () => {
     render(<CreatePersonaPage />);
     expect(await screen.findByRole('radio', { name: 'Marcus' })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: 'Jake' })).toBeInTheDocument();
+  });
+
+  it('groups avatars under their archetype display name', async () => {
+    render(<CreatePersonaPage />);
+
+    expect(await screen.findByRole('heading', { name: 'The Mentor' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'The Friend' })).toBeInTheDocument();
+  });
+
+  it('falls back to a capitalized category when archetypes have not loaded yet', async () => {
+    personaApiMock.getArchetypes.mockReturnValue(new Promise(() => {}));
+    render(<CreatePersonaPage />);
+
+    expect(await screen.findByRole('heading', { name: 'Mentor' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Friend' })).toBeInTheDocument();
+  });
+
+  it('shows the selected avatar archetype on the creating confirmation panel', async () => {
+    const user = userEvent.setup();
+    render(<CreatePersonaPage />);
+
+    await user.click(await screen.findByRole('radio', { name: 'Jake' }));
+
+    expect(screen.getByText('Creating')).toBeInTheDocument();
+    expect(screen.getAllByText('The Friend').length).toBeGreaterThan(1);
   });
 
   it('selecting an avatar reveals a collapsed rename drawer defaulting to the manifest name', async () => {
