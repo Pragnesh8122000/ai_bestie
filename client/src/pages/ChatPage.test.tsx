@@ -117,6 +117,68 @@ describe('ChatPage drawer', () => {
     expect(await screen.findAllByText('sam · the friend')).toHaveLength(2);
   });
 
+  it('hydrates a saved conversation persona after a cold load', async () => {
+    const user = userEvent.setup();
+    const current = useChatStore.getState().activeConversation!;
+    const saved = {
+      ...current,
+      id: 'b',
+      title: 'Coach check-in',
+      personaId: 'p2',
+      messages: [],
+    };
+    usePersonaStore.setState({ personas: [], activePersonaId: null });
+    useChatStore.setState({ conversations: [current, saved] });
+    api.list.mockResolvedValue({
+      data: { data: { conversations: [current, saved], hasMore: false } },
+    });
+    api.get.mockResolvedValue({
+      data: {
+        data: {
+          conversation: saved,
+          persona: {
+            id: 'p2',
+            name: 'Riley',
+            archetype: 'coach',
+            avatarId: 'coach-female-01',
+            traits: {},
+          },
+        },
+      },
+    });
+
+    render(<ChatPage />, { wrapper: MemoryRouter });
+    await user.click(await screen.findByTitle('Coach check-in'));
+
+    expect(await screen.findByText('Riley')).toBeInTheDocument();
+    expect(screen.getByText('The Coach')).toBeInTheDocument();
+  });
+
+  it('keeps the persona type visible when archetype metadata fails', async () => {
+    const activeConversation = useChatStore.getState().activeConversation!;
+    usePersonaStore.setState({
+      personas: [{ id: 'p1', name: 'Morgan', archetype: 'therapist', avatarId: 'a' } as any],
+      archetypes: [],
+    });
+    useChatStore.setState({
+      activeConversation: {
+        ...activeConversation,
+        messages: [{
+          _id: 'm1',
+          role: 'assistant',
+          content: 'Take your time.',
+          timestamp: '2026-09-17T17:00:00.000Z',
+        }],
+      },
+    });
+    personaApiMock.getArchetypes.mockRejectedValue(new Error('offline'));
+
+    render(<ChatPage />, { wrapper: MemoryRouter });
+
+    expect(await screen.findByText('The Therapist')).toBeInTheDocument();
+    expect(screen.getByText('morgan · the therapist')).toBeInTheDocument();
+  });
+
   it('opens the drawer and locks body scroll, restoring it on close', async () => {
     const user = userEvent.setup();
     render(<ChatPage />, { wrapper: MemoryRouter });

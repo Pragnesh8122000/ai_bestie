@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { Conversation } from '../models/Conversation';
+import { Persona } from '../models/Persona';
 import { catchAsync, AppError } from '../utils/errors';
 import { requireAuth, chatRateLimiter } from '../middleware/auth';
 import {
@@ -114,6 +115,15 @@ router.get(
       throw new AppError('Conversation not found', 404);
     }
 
+    const persona = await Persona.findOne({
+      _id: conversation.personaId,
+      userId: req.userId,
+    }).lean();
+
+    if (!persona) {
+      throw new AppError('Conversation not found', 404);
+    }
+
     res.json({
       success: true,
       data: {
@@ -128,6 +138,15 @@ router.get(
           lastMessagePreview: conversation.lastMessagePreview ?? '',
           createdAt: conversation.createdAt,
           lastMessageAt: conversation.lastMessageAt,
+        },
+        persona: {
+          id: persona._id.toHexString(),
+          name: persona.name,
+          archetype: persona.archetype,
+          avatarId: persona.avatarId,
+          traits: persona.traits,
+          createdAt: persona.createdAt,
+          updatedAt: persona.updatedAt,
         },
       },
     });

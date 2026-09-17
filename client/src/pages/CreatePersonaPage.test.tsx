@@ -62,12 +62,12 @@ describe('CreatePersonaPage', () => {
     expect(screen.getByRole('heading', { name: 'The Friend' })).toBeInTheDocument();
   });
 
-  it('falls back to a capitalized category when archetypes have not loaded yet', async () => {
+  it('falls back to the archetype display name when metadata has not loaded yet', async () => {
     personaApiMock.getArchetypes.mockReturnValue(new Promise(() => {}));
     render(<CreatePersonaPage />);
 
-    expect(await screen.findByRole('heading', { name: 'Mentor' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Friend' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'The Mentor' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'The Friend' })).toBeInTheDocument();
   });
 
   it('shows the selected avatar archetype on the creating confirmation panel', async () => {

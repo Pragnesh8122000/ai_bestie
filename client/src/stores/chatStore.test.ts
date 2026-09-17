@@ -41,8 +41,26 @@ function conversation(id: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
-function detail(id: string, overrides: Record<string, unknown> = {}) {
-  return { data: { data: { conversation: { ...conversation(id), messages: [], ...overrides } } } };
+function detail(
+  id: string,
+  overrides: Record<string, unknown> = {},
+  personaOverrides: Record<string, unknown> = {},
+) {
+  return {
+    data: {
+      data: {
+        conversation: { ...conversation(id), messages: [], ...overrides },
+        persona: {
+          id: 'p1',
+          name: 'Sam',
+          archetype: 'friend',
+          avatarId: 'friend-male-01',
+          traits: {},
+          ...personaOverrides,
+        },
+      },
+    },
+  };
 }
 
 const initialState = useChatStore.getState();

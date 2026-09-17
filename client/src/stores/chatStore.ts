@@ -138,7 +138,9 @@ export const useChatStore = create<ChatState>((set, getState) => ({
   openConversation: async (id: string) => {
     try {
       const response = await conversationApi.get(id);
-      set({ activeConversation: response.data.data.conversation, activeConversationId: id });
+      const { conversation, persona } = response.data.data;
+      usePersonaStore.getState().upsertPersona(persona);
+      set({ activeConversation: conversation, activeConversationId: id });
     } catch (error: any) {
       set({ error: errorMessage(error, 'Failed to load conversation') });
     }
@@ -170,8 +172,10 @@ export const useChatStore = create<ChatState>((set, getState) => ({
     try {
       const response = await conversationApi.get(id);
       if (myLoadId !== loadId) return; // superseded by a newer switch
+      const { conversation, persona } = response.data.data;
+      usePersonaStore.getState().upsertPersona(persona);
       set({
-        activeConversation: response.data.data.conversation,
+        activeConversation: conversation,
         isLoadingConversation: false,
       });
     } catch (error: any) {

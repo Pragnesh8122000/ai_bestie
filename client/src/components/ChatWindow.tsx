@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { useChatStore } from '../stores/chatStore';
 import { usePersonaStore } from '../stores/personaStore';
+import { getArchetypeDisplayName } from '../utils/persona';
 import VoiceOrb from './VoiceOrb';
 
 const STATUS_LABEL: Record<'idle' | 'thinking' | 'speaking' | 'listening', string> = {
@@ -34,7 +35,7 @@ export default function ChatWindow() {
 
   const persona = personas.find((p) => p.id === activeConversation?.personaId);
   const archetypeLabel = persona
-    ? archetypes.find((a) => a.type === persona.archetype)?.displayName
+    ? getArchetypeDisplayName(persona.archetype, archetypes)
     : undefined;
 
   useEffect(() => {

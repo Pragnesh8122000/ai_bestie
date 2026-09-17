@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { avatarApi, Avatar } from '../api/avatar';
 import { usePersonaStore } from '../stores/personaStore';
+import { getArchetypeDisplayName } from '../utils/persona';
 
 export default function CreatePersonaPage() {
   const navigate = useNavigate();
@@ -43,9 +44,8 @@ export default function CreatePersonaPage() {
     fetchArchetypes();
   }, [fetchArchetypes]);
 
-  const getArchetypeLabel = (category: string) =>
-    archetypes.find((a) => a.type === category)?.displayName ??
-    `${category.charAt(0).toUpperCase()}${category.slice(1)}`;
+  const getArchetypeLabel = (category: Avatar['category']) =>
+    getArchetypeDisplayName(category, archetypes);
 
   const categoryOrder = Array.from(new Set(avatars.map((a) => a.category)));
   const avatarsByCategory = categoryOrder.map((category) => ({
