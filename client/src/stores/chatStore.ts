@@ -29,7 +29,6 @@ interface ChatState {
 
   fetchConversations: (opts?: { append?: boolean }) => Promise<void>;
   openDefaultConversation: () => Promise<void>;
-  openConversation: (id: string) => Promise<void>;
   switchConversation: (id: string) => Promise<void>;
   createConversation: (personaId: string, avatarId: string, title?: string) => Promise<string>;
   startNewConversation: () => Promise<string | null>;
@@ -114,9 +113,11 @@ export const useChatStore = create<ChatState>((set, getState) => ({
   },
 
   openDefaultConversation: async () => {
+    const myLoadId = ++loadId;
     set({ isLoadingConversation: true });
     try {
       const response = await conversationApi.getDefault();
+      if (myLoadId !== loadId) return;
       const { conversation, persona } = response.data.data;
       usePersonaStore.getState().upsertPersona(persona);
       set((state) => ({
@@ -128,21 +129,11 @@ export const useChatStore = create<ChatState>((set, getState) => ({
           : sortByRecency([conversation, ...state.conversations]),
       }));
     } catch (error: any) {
+      if (myLoadId !== loadId) return;
       set({
         error: errorMessage(error, 'Failed to start conversation'),
         isLoadingConversation: false,
       });
-    }
-  },
-
-  openConversation: async (id: string) => {
-    try {
-      const response = await conversationApi.get(id);
-      const { conversation, persona } = response.data.data;
-      usePersonaStore.getState().upsertPersona(persona);
-      set({ activeConversation: conversation, activeConversationId: id });
-    } catch (error: any) {
-      set({ error: errorMessage(error, 'Failed to load conversation') });
     }
   },
 
