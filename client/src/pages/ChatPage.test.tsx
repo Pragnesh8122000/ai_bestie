@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { render, screen, waitFor, cleanup, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import '@testing-library/jest-dom/vitest';
 
 vi.mock('../utils/speech', () => ({
@@ -79,13 +80,13 @@ afterEach(cleanup);
 
 describe('ChatPage drawer', () => {
   it('shows the active conversation title in the header', async () => {
-    render(<ChatPage />);
+    render(<ChatPage />, { wrapper: MemoryRouter });
     expect(await screen.findByRole('heading', { name: 'Lisbon trip' })).toBeInTheDocument();
   });
 
   it('opens the drawer and locks body scroll, restoring it on close', async () => {
     const user = userEvent.setup();
-    render(<ChatPage />);
+    render(<ChatPage />, { wrapper: MemoryRouter });
 
     await user.click(screen.getByRole('button', { name: /open conversations/i }));
 
@@ -99,7 +100,7 @@ describe('ChatPage drawer', () => {
 
   it('closes the drawer on Escape', async () => {
     const user = userEvent.setup();
-    render(<ChatPage />);
+    render(<ChatPage />, { wrapper: MemoryRouter });
 
     await user.click(screen.getByRole('button', { name: /open conversations/i }));
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
@@ -112,7 +113,7 @@ describe('ChatPage drawer', () => {
 
   it('releases the scroll lock when the viewport grows to desktop', async () => {
     const user = userEvent.setup();
-    render(<ChatPage />);
+    render(<ChatPage />, { wrapper: MemoryRouter });
 
     await user.click(screen.getByRole('button', { name: /open conversations/i }));
     expect(document.body.style.overflow).toBe('hidden');
@@ -130,7 +131,7 @@ describe('ChatPage drawer', () => {
 describe('ChatPage error toast', () => {
   it('renders a store error and dismisses it on click', async () => {
     const user = userEvent.setup();
-    render(<ChatPage />);
+    render(<ChatPage />, { wrapper: MemoryRouter });
 
     act(() => {
       useChatStore.setState({ error: 'Failed to rename conversation' });
@@ -145,7 +146,7 @@ describe('ChatPage error toast', () => {
   it('auto-dismisses the error after 5 seconds', async () => {
     vi.useFakeTimers();
     try {
-      render(<ChatPage />);
+      render(<ChatPage />, { wrapper: MemoryRouter });
       act(() => {
         useChatStore.setState({ error: 'Connection stalled. Please try again.' });
       });

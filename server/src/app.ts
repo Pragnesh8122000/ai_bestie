@@ -49,8 +49,10 @@ app.use(express.json({ limit: '10kb' }));
 app.use(cookieParser());
 app.use(passport.initialize());
 
-// Serve static assets (avatar images) - resolve relative to project root
-const publicDir = path.resolve(process.cwd(), 'server/public/avatars');
+// Serve static assets (avatar images) - resolve relative to this file so it
+// works regardless of the process's cwd (differs between `npm run dev -w
+// server`, the root workspace script, and the built dist/ output).
+const publicDir = path.resolve(__dirname, '../public/avatars');
 app.use('/avatars', express.static(publicDir));
 
 // Health check (before the global /api limiter so it's not rate-limited)

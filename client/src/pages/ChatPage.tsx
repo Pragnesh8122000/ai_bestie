@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useChatStore } from '../stores/chatStore';
 import { useAuthStore } from '../stores/authStore';
@@ -10,6 +11,7 @@ import VoiceOrb from '../components/VoiceOrb';
 const DESKTOP_QUERY = '(min-width: 640px)';
 
 export default function ChatPage() {
+  const navigate = useNavigate();
   const { user, logout } = useAuthStore();
   const openDefaultConversation = useChatStore((s) => s.openDefaultConversation);
   const abortStream = useChatStore((s) => s.abortStream);
@@ -100,6 +102,15 @@ export default function ChatPage() {
         <ConversationList />
 
         <div className="flex flex-col gap-3 border-t border-line/60 px-4 py-4">
+          <button
+            type="button"
+            onClick={() => navigate('/create-persona')}
+            className="flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-line/60 px-4 py-3 font-sans text-sm font-medium text-linen transition-colors duration-150 hover:border-ember hover:text-ember active:scale-[0.98]"
+          >
+            <PeopleIcon />
+            New companion
+          </button>
+
           <div className="flex items-center justify-between rounded-2xl border border-line/60 bg-clay/20 px-4 py-3">
             <div className="flex items-center gap-2.5">
               <WaveIcon active={ttsEnabled} />
@@ -168,6 +179,20 @@ export default function ChatPage() {
 
               <ConversationList />
 
+              <div className="px-4 pb-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSidebarOpen(false);
+                    navigate('/create-persona');
+                  }}
+                  className="flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-line/60 px-4 py-3 font-sans text-sm font-medium text-linen transition-colors duration-150 hover:border-ember hover:text-ember active:scale-[0.98]"
+                >
+                  <PeopleIcon />
+                  New companion
+                </button>
+              </div>
+
               <div className="flex items-center gap-3 border-t border-line/60 px-4 py-3">
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-ember to-ember-dim font-sans text-sm font-semibold text-ink">
                   {initial}
@@ -218,9 +243,10 @@ export default function ChatPage() {
 
           <button
             type="button"
-            disabled
-            title="Personas — coming soon"
-            className="flex h-10 w-10 items-center justify-center rounded-full border border-line text-linen-dim opacity-50"
+            onClick={() => navigate('/create-persona')}
+            title="New companion"
+            aria-label="New companion"
+            className="flex h-10 w-10 items-center justify-center rounded-full border border-line text-linen-dim transition-colors duration-150 hover:border-ember hover:text-ember"
           >
             <PeopleIcon />
           </button>
