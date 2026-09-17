@@ -71,6 +71,7 @@ beforeEach(() => {
     error: null,
     isSidebarOpen: false,
     isLoadingList: false,
+    isLoadingConversation: false,
     isStreaming: false,
   });
   useAuthStore.setState({ user: { id: 'u1', email: 'a@b.c', name: 'Tester' } as any });
@@ -152,6 +153,63 @@ describe('ChatPage drawer', () => {
 
     expect(await screen.findByText('Riley')).toBeInTheDocument();
     expect(screen.getByText('The Coach')).toBeInTheDocument();
+  });
+
+  it('does not bootstrap the default while a saved conversation is loading', async () => {
+    const user = userEvent.setup();
+    let resolveSaved: (value: unknown) => void = () => {};
+    const current = useChatStore.getState().activeConversation!;
+    const saved = {
+      ...current,
+      id: 'b',
+      title: 'Coach check-in',
+      personaId: 'p2',
+      messages: [],
+    };
+    useChatStore.setState({ conversations: [current, saved] });
+    api.list.mockResolvedValue({
+      data: { data: { conversations: [current, saved], hasMore: false } },
+    });
+    api.get.mockImplementation(() => new Promise((resolve) => { resolveSaved = resolve; }));
+    api.getDefault.mockResolvedValue({
+      data: {
+        data: {
+          conversation: { ...current, id: 'default', messages: [] },
+          persona: {
+            id: 'p1',
+            name: 'Sam',
+            archetype: 'friend',
+            avatarId: 'friend-male-01',
+            traits: {},
+          },
+        },
+      },
+    });
+
+    render(<ChatPage />, { wrapper: MemoryRouter });
+    await user.click(await screen.findByTitle('Coach check-in'));
+
+    expect(api.getDefault).not.toHaveBeenCalled();
+
+    act(() => {
+      resolveSaved({
+        data: {
+          data: {
+            conversation: saved,
+            persona: {
+              id: 'p2',
+              name: 'Riley',
+              archetype: 'coach',
+              avatarId: 'coach-female-01',
+              traits: {},
+            },
+          },
+        },
+      });
+    });
+
+    expect(await screen.findByText('Riley')).toBeInTheDocument();
+    expect(useChatStore.getState().activeConversationId).toBe('b');
   });
 
   it('keeps the persona type visible when archetype metadata fails', async () => {
