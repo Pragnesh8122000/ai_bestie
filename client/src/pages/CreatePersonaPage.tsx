@@ -141,7 +141,9 @@ export default function CreatePersonaPage() {
             <div className="flex items-center justify-between gap-4">
               <div className="min-w-0">
                 <p className="font-sans text-sm text-linen-dim">Creating</p>
-                <p className="truncate font-display text-xl text-linen">{name || selectedAvatar.name}</p>
+                <p className="truncate font-display text-xl text-linen">
+                  {name || selectedAvatar.name}
+                </p>
               </div>
               <button
                 type="button"
