@@ -206,7 +206,7 @@ Get a single avatar by ID.
 
 ## Persona Routes
 
-All persona routes require authentication.
+All persona routes require authentication, except `GET /api/personas/archetypes`, which is public (guests can browse archetypes without signing in).
 
 ### GET /api/personas/archetypes
 

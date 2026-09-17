@@ -4,9 +4,10 @@ import { useAuthStore } from './stores/authStore';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import ChatPage from './pages/ChatPage';
+import GuestChatPage from './pages/GuestChatPage';
 
 function App() {
-  const { initialize, isAuthenticated, isLoading } = useAuthStore();
+  const { initialize, isAuthenticated, isGuest, isLoading } = useAuthStore();
 
   useEffect(() => {
     initialize();
@@ -42,11 +43,18 @@ function App() {
           }
         />
 
-        {/* Protected routes */}
+        {/* Signed-in users get the full chat experience; guests get a
+            read-only preview; everyone else is sent to sign in. */}
         <Route
           path="/"
           element={
-            isAuthenticated ? <ChatPage /> : <Navigate to="/login" replace />
+            isAuthenticated ? (
+              <ChatPage />
+            ) : isGuest ? (
+              <GuestChatPage />
+            ) : (
+              <Navigate to="/login" replace />
+            )
           }
         />
 
