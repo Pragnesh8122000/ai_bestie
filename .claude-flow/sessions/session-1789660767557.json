@@ -1,0 +1,23 @@
+{
+  "id": "session-1789660767557",
+  "startedAt": "2026-09-17T15:59:27.557Z",
+  "cwd": "/Users/pragnesh/.no-mistakes/worktrees/401f13dfe55c/01M2R1CHTD7T1P722HMH6BT4JW",
+  "context": {
+    "lastMatchedPatterns": [
+      "insight-1786552270288-2hw2",
+      "insight-1783887811566-nr8m",
+      "insight-1786552270288-m6m4",
+      "insight-1783887811566-i6nc",
+      "insight-1784443131286-fb3r"
+    ]
+  },
+  "metrics": {
+    "edits": 4,
+    "commands": 0,
+    "tasks": 0,
+    "errors": 0
+  },
+  "updatedAt": "2026-09-17T16:05:05.866Z",
+  "endedAt": "2026-09-17T16:07:15.628Z",
+  "duration": 468071
+}

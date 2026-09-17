@@ -5,6 +5,7 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import ChatPage from './pages/ChatPage';
 import GuestChatPage from './pages/GuestChatPage';
+import CreatePersonaPage from './pages/CreatePersonaPage';
 
 function App() {
   const { initialize, isAuthenticated, isGuest, isLoading } = useAuthStore();
@@ -40,6 +41,13 @@ function App() {
           path="/register"
           element={
             isAuthenticated ? <Navigate to="/" replace /> : <RegisterPage />
+          }
+        />
+
+        <Route
+          path="/create-persona"
+          element={
+            isAuthenticated ? <CreatePersonaPage /> : <Navigate to="/login" replace />
           }
         />
 

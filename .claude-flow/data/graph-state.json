@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": 1789619375065,
+  "updatedAt": 1789661498955,
   "nodeCount": 23,
   "nodes": {
     "mem-MEMORY-ai-bestie---memory-index-0": {
@@ -20,15 +20,15 @@
     "mem-implementation-progress-completed-milestones-1": {
       "id": "mem-implementation-progress-completed-milestones-1",
       "category": "implementation-progress",
-      "confidence": 0.05,
-      "accessCount": 0,
+      "confidence": 0.165,
+      "accessCount": 1,
       "createdAt": 1783280653531
     },
     "mem-implementation-progress-remaining-milestones-2": {
       "id": "mem-implementation-progress-remaining-milestones-2",
       "category": "implementation-progress",
-      "confidence": 0.05,
-      "accessCount": 0,
+      "confidence": 0.165,
+      "accessCount": 1,
       "createdAt": 1783280653531
     },
     "mem-phase1-spec-locked-----0": {
@@ -55,8 +55,8 @@
     "insight-1783883038319-oqfj": {
       "id": "insight-1783883038319-oqfj",
       "category": "insights",
-      "confidence": 0.53,
-      "accessCount": 1,
+      "confidence": 0.05,
+      "accessCount": 0,
       "createdAt": 1783883038319
     },
     "insight-1783883038319-acva": {
@@ -125,8 +125,8 @@
     "insight-1784443131286-ie2d": {
       "id": "insight-1784443131286-ie2d",
       "category": "insights",
-      "confidence": 0.53,
-      "accessCount": 1,
+      "confidence": 0.05,
+      "accessCount": 0,
       "createdAt": 1784443131286
     },
     "insight-1784443131286-ati3": {
@@ -146,8 +146,8 @@
     "insight-1784443131286-93e7": {
       "id": "insight-1784443131286-93e7",
       "category": "insights",
-      "confidence": 0.53,
-      "accessCount": 1,
+      "confidence": 0.05,
+      "accessCount": 0,
       "createdAt": 1784443131286
     },
     "insight-1786552270288-m6m4": {

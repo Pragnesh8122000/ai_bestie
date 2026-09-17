@@ -41,6 +41,7 @@ ai-bestie/
 │   │   ├── api/               # Axios client + API modules
 │   │   │   ├── client.ts      # Base axios instance (withCredentials)
 │   │   │   ├── auth.ts        # Auth API (register/login/logout/me)
+│   │   │   ├── avatar.ts      # Avatar list API
 │   │   │   ├── conversation.ts # Conversation + SSE streaming API
 │   │   │   └── persona.ts    # Persona CRUD API
 │   │   ├── components/        # Reusable UI components
@@ -51,6 +52,7 @@ ai-bestie/
 │   │   │   ├── LoginPage.tsx
 │   │   │   ├── RegisterPage.tsx
 │   │   │   ├── ChatPage.tsx
+│   │   │   ├── CreatePersonaPage.tsx # Gallery-first persona creation (avatar → optional rename → create)
 │   │   │   └── GuestChatPage.tsx # Read-only preview for unauthenticated guests
 │   │   ├── stores/            # Zustand state stores
 │   │   │   ├── authStore.ts   # Auth state (user, login, logout)
@@ -193,7 +195,7 @@ npm run dev:client   # Vite on :5173
 Navigate to **http://localhost:5173**
 
 1. Register a new account
-2. Create your first companion (choose archetype → avatar → traits → name)
+2. Create your first companion (pick an avatar, optionally rename it, then Create — archetype and traits are derived from the avatar)
 3. Start chatting!
 
 ## 🔑 Authentication Flow
