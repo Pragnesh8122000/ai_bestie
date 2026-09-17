@@ -50,7 +50,8 @@ ai-bestie/
 │   │   ├── pages/             # Route-level pages
 │   │   │   ├── LoginPage.tsx
 │   │   │   ├── RegisterPage.tsx
-│   │   │   └── ChatPage.tsx
+│   │   │   ├── ChatPage.tsx
+│   │   │   └── GuestChatPage.tsx # Read-only preview for unauthenticated guests
 │   │   ├── stores/            # Zustand state stores
 │   │   │   ├── authStore.ts   # Auth state (user, login, logout)
 │   │   │   ├── chatStore.ts   # Chat + avatar state machine
@@ -221,6 +222,7 @@ Navigate to **http://localhost:5173**
 - JWT stored in **HTTP-only cookie** (7-day expiry)
 - `SameSite=Lax` in dev, `Strict` in production
 - Rate-limited: 5 auth attempts per 10 minutes, 10 API requests per 10 seconds
+- **Continue as guest** (login page) skips auth entirely — no token or session is created. Guests get a read-only preview (frozen sample transcript + public archetype browsing via `GET /api/personas/archetypes`); every write route still requires the `requireAuth` cookie above, so guest state grants no API access.
 
 See [docs/api-reference.md](docs/api-reference.md) for full endpoint details.
 
