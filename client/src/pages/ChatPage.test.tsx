@@ -212,6 +212,20 @@ describe('ChatPage drawer', () => {
     expect(useChatStore.getState().activeConversationId).toBe('b');
   });
 
+  it('attempts default bootstrap once when the request fails', async () => {
+    useChatStore.setState({
+      activeConversation: null,
+      activeConversationId: null,
+      isLoadingConversation: false,
+    });
+    api.getDefault.mockRejectedValue({ response: { data: { message: 'offline' } } });
+
+    render(<ChatPage />, { wrapper: MemoryRouter });
+
+    expect(await screen.findByText('offline')).toBeInTheDocument();
+    await waitFor(() => expect(api.getDefault).toHaveBeenCalledTimes(1));
+  });
+
   it('keeps the persona type visible when archetype metadata fails', async () => {
     const activeConversation = useChatStore.getState().activeConversation!;
     usePersonaStore.setState({

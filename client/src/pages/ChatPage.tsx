@@ -27,11 +27,14 @@ export default function ChatPage() {
 
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const defaultBootstrapAttempted = useRef(false);
 
   // Only auto-open if there's no conversation yet (avoids refetch + the
   // "connecting" flash on every route-away-and-back).
   useEffect(() => {
-    if (!activeConversationId && !isLoadingConversation) openDefaultConversation();
+    if (defaultBootstrapAttempted.current || activeConversationId || isLoadingConversation) return;
+    defaultBootstrapAttempted.current = true;
+    openDefaultConversation();
   }, [openDefaultConversation, activeConversationId, isLoadingConversation]);
 
   // Close the mobile drawer when the viewport crosses into desktop, otherwise
