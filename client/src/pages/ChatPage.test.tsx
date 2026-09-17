@@ -94,6 +94,29 @@ describe('ChatPage drawer', () => {
     expect(await screen.findByRole('heading', { name: 'Lisbon trip' })).toBeInTheDocument();
   });
 
+  it('shows the persona archetype on saved and streaming assistant message rows', async () => {
+    const activeConversation = useChatStore.getState().activeConversation!;
+    useChatStore.setState({
+      activeConversation: {
+        ...activeConversation,
+        messages: [
+          {
+            _id: 'm1',
+            role: 'assistant',
+            content: 'I am here.',
+            timestamp: '2026-09-17T17:00:00.000Z',
+          },
+        ],
+      },
+      isStreaming: true,
+      streamingContent: 'Still listening.',
+    });
+
+    render(<ChatPage />, { wrapper: MemoryRouter });
+
+    expect(await screen.findAllByText('sam · the friend')).toHaveLength(2);
+  });
+
   it('opens the drawer and locks body scroll, restoring it on close', async () => {
     const user = userEvent.setup();
     render(<ChatPage />, { wrapper: MemoryRouter });

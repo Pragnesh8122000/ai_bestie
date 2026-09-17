@@ -137,6 +137,7 @@ export default function ChatWindow() {
                       <div className="mb-1 flex items-baseline gap-2">
                         <span className="font-mono text-[10px] tracking-[0.12em] text-linen-dim/50">
                           {(persona?.name || 'sam').toLowerCase()}
+                          {archetypeLabel ? ` · ${archetypeLabel.toLowerCase()}` : ''}
                         </span>
                         <span className="font-mono text-[10px] tracking-[0.12em] text-linen-dim/50">
                           {time || 'now'}
@@ -163,6 +164,7 @@ export default function ChatWindow() {
                   <div className="mb-1 flex items-baseline gap-2">
                     <span className="font-mono text-[10px] tracking-[0.12em] text-linen-dim/50">
                       {(persona?.name || 'sam').toLowerCase()}
+                      {archetypeLabel ? ` · ${archetypeLabel.toLowerCase()}` : ''}
                     </span>
                     <span className="font-mono text-[10px] tracking-[0.12em] text-linen-dim/50">
                       now
