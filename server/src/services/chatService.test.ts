@@ -1,6 +1,34 @@
-import { describe, it, expect } from 'vitest';
-import { deriveTitle } from './chatService';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { deriveTitle, ensureDefaultConversation } from './chatService';
 import { toPreview, PREVIEW_MAX_LENGTH } from '../models/Conversation';
+import { Conversation } from '../models/Conversation';
+import { Persona } from '../models/Persona';
+import { ensureDefaultPersona } from './personaService';
+
+vi.mock('../models/Conversation', async () => {
+  const actual = await vi.importActual<typeof import('../models/Conversation')>(
+    '../models/Conversation',
+  );
+  return {
+    ...actual,
+    Conversation: {
+      findOne: vi.fn(),
+      findById: vi.fn(),
+      create: vi.fn(),
+    },
+  };
+});
+
+vi.mock('../models/Persona', () => ({
+  Persona: {
+    findById: vi.fn(),
+  },
+}));
+
+vi.mock('./personaService', () => ({
+  ensureDefaultPersona: vi.fn(),
+  assembleSystemPrompt: vi.fn(),
+}));
 
 describe('deriveTitle', () => {
   it('keeps a short message verbatim', () => {
@@ -62,5 +90,74 @@ describe('toPreview', () => {
 
   it('returns an empty string for empty input', () => {
     expect(toPreview('')).toBe('');
+  });
+});
+
+describe('ensureDefaultConversation', () => {
+  const fakeId = (hex: string) => ({
+    toHexString: () => hex,
+    toString: () => hex,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('resumes the most recently active conversation under its own persona, not the default one', async () => {
+    const defaultPersona = {
+      _id: fakeId('default-persona-id'),
+      name: 'Sam',
+      archetype: 'friend',
+      avatarId: 'friend-male-01',
+    };
+    const coachPersona = {
+      _id: fakeId('coach-persona-id'),
+      name: 'Coach Alex',
+      archetype: 'coach',
+      avatarId: 'coach-male-01',
+    };
+    const coachConversation = {
+      _id: fakeId('coach-conversation-id'),
+      userId: 'user-1',
+      personaId: fakeId('coach-persona-id'),
+      isArchived: false,
+    };
+
+    vi.mocked(ensureDefaultPersona).mockResolvedValue(defaultPersona as any);
+    vi.mocked(Conversation.findOne).mockReturnValue({
+      sort: () => ({ lean: () => Promise.resolve(coachConversation) }),
+    } as any);
+    vi.mocked(Persona.findById).mockResolvedValue(coachPersona as any);
+
+    const result = await ensureDefaultConversation('user-1');
+
+    expect(Persona.findById).toHaveBeenCalledWith(coachConversation.personaId);
+    expect(result.persona).toBe(coachPersona);
+    expect(result.conversation.personaId).toBe('coach-persona-id');
+  });
+
+  it('uses the default persona when the resumed conversation already belongs to it', async () => {
+    const defaultPersona = {
+      _id: fakeId('default-persona-id'),
+      name: 'Sam',
+      archetype: 'friend',
+      avatarId: 'friend-male-01',
+    };
+    const defaultConversation = {
+      _id: fakeId('default-conversation-id'),
+      userId: 'user-1',
+      personaId: fakeId('default-persona-id'),
+      isArchived: false,
+    };
+
+    vi.mocked(ensureDefaultPersona).mockResolvedValue(defaultPersona as any);
+    vi.mocked(Conversation.findOne).mockReturnValue({
+      sort: () => ({ lean: () => Promise.resolve(defaultConversation) }),
+    } as any);
+
+    const result = await ensureDefaultConversation('user-1');
+
+    expect(Persona.findById).not.toHaveBeenCalled();
+    expect(result.persona).toBe(defaultPersona);
   });
 });
