@@ -20,7 +20,7 @@ const seed = async () => {
       email: 'test@aibestie.com',
       password: 'password123',
       name: 'Test User',
-      authProvider: 'email',
+      authProviders: ['password'],
     });
 
     console.log(`Created test user: ${user.email} (${user._id})`);

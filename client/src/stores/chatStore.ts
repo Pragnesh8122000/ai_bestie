@@ -322,25 +322,33 @@ export const useChatStore = create<ChatState>((set, getState) => ({
   setSidebarOpen: (open: boolean) => set({ isSidebarOpen: open }),
 
   abortStream: () => {
+    // Invalidate callbacks even when a custom/slow fetch implementation
+    // ignores AbortSignal. This is the authoritative stale-stream guard.
+    ++streamId;
     if (currentController) {
       currentController.abort();
       currentController = null;
     }
     clearWatchdog();
     stopSpeaking();
+    set({
+      avatarState: 'idle',
+      isStreaming: false,
+      streamingContent: '',
+    });
   },
 
   sendMessage: async (content: string) => {
     const { activeConversation, isStreaming } = getState();
-    if (!activeConversation || !content.trim()) return;
+    // Single-flight at the state boundary, not just the disabled button. Two
+    // same-tick UI events must never emit duplicate generation requests.
+    if (!activeConversation || !content.trim() || isStreaming) return;
 
     // Pin the conversation this stream belongs to — the user may switch away
     // mid-reply, and none of the callbacks below may touch the new one.
     const convId = activeConversation.id;
     const wasEmpty = (activeConversation.messages?.length ?? 0) === 0;
-
-    // Abort any in-flight stream before starting a new one (concurrency guard).
-    if (isStreaming) getState().abortStream();
+    const originalTitle = activeConversation.title;
 
     const myStreamId = ++streamId;
     const controller = new AbortController();
@@ -348,6 +356,7 @@ export const useChatStore = create<ChatState>((set, getState) => ({
 
     // Add user message optimistically
     const userMessage: Message = {
+      _id: `client_${myStreamId}_${Date.now()}`,
       role: 'user',
       content,
       timestamp: new Date().toISOString(),
@@ -406,7 +415,16 @@ export const useChatStore = create<ChatState>((set, getState) => ({
       const response = await conversationApi.streamMessage(convId, content, controller.signal);
 
       if (!response.ok) {
-        throw new Error('Stream request failed');
+        let message = `Message request failed (${response.status})`;
+        try {
+          const body = await response.json();
+          if (typeof body?.message === 'string') message = body.message;
+        } catch {
+          // Non-JSON proxy errors still retain the status-aware fallback.
+        }
+        const rejected = new Error(message) as Error & { requestRejected: boolean };
+        rejected.requestRejected = true;
+        throw rejected;
       }
 
       const reader = response.body?.getReader();
@@ -420,6 +438,7 @@ export const useChatStore = create<ChatState>((set, getState) => ({
         if (myStreamId !== streamId) break; // a newer stream superseded this one
         const { done, value } = await reader.read();
         if (done) break;
+        if (myStreamId !== streamId) break;
 
         resetWatchdog();
 
@@ -430,6 +449,7 @@ export const useChatStore = create<ChatState>((set, getState) => ({
         buffer = lines.pop() || ''; // Keep incomplete line in buffer
 
         for (const line of lines) {
+          if (myStreamId !== streamId) return;
           if (!line.startsWith('data: ')) continue;
           const data = line.slice(6).trim();
           if (!data || data.startsWith(':')) continue;
@@ -535,6 +555,29 @@ export const useChatStore = create<ChatState>((set, getState) => ({
       // Stale stream — a newer stream superseded this one; don't touch state.
       if (myStreamId !== streamId) return;
       const wasAborted = error?.name === 'AbortError';
+      const requestRejected = error?.requestRejected === true;
+      if (requestRejected) {
+        // The server rejected the request before chatService persisted it
+        // (notably a 429). Remove only this optimistic turn and restore an
+        // auto-title derived from a message that never landed.
+        set((state) => ({
+          activeConversation:
+            state.activeConversation?.id === convId
+              ? {
+                  ...state.activeConversation,
+                  title: wasEmpty ? originalTitle : state.activeConversation.title,
+                  messages: state.activeConversation.messages.filter(
+                    (message) => message._id !== userMessage._id,
+                  ),
+                }
+              : state.activeConversation,
+          conversations: state.conversations.map((conversation) =>
+            conversation.id === convId && wasEmpty
+              ? { ...conversation, title: originalTitle }
+              : conversation,
+          ),
+        }));
+      }
       if (wasAborted) {
         // Aborted by us (stalled / navigated / switched / new message). The
         // watchdog path already set a specific error; otherwise reset quietly.

@@ -8,8 +8,8 @@ passport.use(
     { usernameField: 'email', passwordField: 'password' },
     async (email, password, done) => {
       try {
-        const user = await User.findOne({ email: email.toLowerCase().trim() });
-        if (!user) {
+        const user = await User.findOne({ email: email.toLowerCase().trim() }).select('+password');
+        if (!user || !(user.authProviders ?? ['password']).includes('password')) {
           return done(null, false, { message: 'Invalid email or password' });
         }
 

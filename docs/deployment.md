@@ -48,6 +48,7 @@ APIs, no vector search. The backend is a single Express process.
 | MongoDB (local or Atlas) | Database | Local: free. Atlas M0: 512MB free |
 | Render | Backend hosting | Free tier (spins down on idle) |
 | Vercel | Frontend hosting | Free tier available |
+| Google Cloud Console | Google Identity Services Web client | Free |
 | Google AI Studio | Gemini Flash API (primary chat) | Free tier (~1500 RPD) |
 | OpenRouter | Free chat models (fallback) | Free models with per-model RPM/daily caps |
 
@@ -64,6 +65,7 @@ PORT=3001
 MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/ai-bestie
 JWT_SECRET=<generate-64-char-random-string>
 CLIENT_URL=https://ai-bestie.vercel.app
+GOOGLE_CLIENT_ID=1234567890-example.apps.googleusercontent.com
 
 # LLM APIs (free tiers)
 GEMINI_API_KEY=...            # Google AI Studio — primary chat provider
@@ -79,6 +81,40 @@ TTS_SPEED=0.95
 
 # No Anthropic/OpenAI/Voyage/Redis keys — those services are not used.
 ```
+
+Set `VITE_GOOGLE_CLIENT_ID` to that **same public Web client ID** in the
+Vercel project environment before building the client. It is build-time Vite
+configuration, not a secret. Google sign-in is intentionally disabled when a
+deployment does not configure the client ID; password auth continues to work.
+
+## Google Cloud Console setup
+
+This app uses the [Google Identity Services web ID-token
+flow](https://developers.google.com/identity/gsi/web/guides/overview), not an
+authorization-code redirect and not a Google client secret.
+
+1. In Google Cloud Console, configure the OAuth consent screen for the app.
+2. Open **APIs & Services → Credentials → Create credentials → OAuth client ID**.
+3. Choose **Web application**.
+4. Add these **Authorized JavaScript origins** (scheme, host, and development
+   port must match exactly):
+   - local: `http://localhost:5173`
+   - current production frontend: `https://ai-bestie.vercel.app`
+   - add the actual custom production origin too if it differs
+5. Do not add an authorized redirect URI for this popup callback flow.
+6. Copy the resulting `*.apps.googleusercontent.com` value into both:
+   - Render/server: `GOOGLE_CLIENT_ID`
+   - Vercel/client build: `VITE_GOOGLE_CLIENT_ID`
+
+The backend uses Google's supported Node library to [verify the ID token and
+audience](https://developers.google.com/identity/gsi/web/guides/verify-google-id-token).
+It requires a verified email and keys provider identity by Google's stable
+`sub`, never by a browser-decoded email claim.
+
+**Credential handoff required after deploy:** the owner supplies one public
+Web OAuth client ID and confirms the exact production frontend origin. No
+client secret is required or accepted. Preview deployment URLs work only if
+their exact origin is also registered; prefer a stable production domain.
 
 ## Backend Deployment (Render)
 
@@ -108,6 +144,8 @@ services:
         value: "true"
       - key: CLIENT_URL
         value: https://ai-bestie.vercel.app
+      - key: GOOGLE_CLIENT_ID
+        sync: false
 
 # No background worker service — there is no memory-extraction job to run.
 ```
@@ -209,15 +247,21 @@ export default defineConfig({
 
 In production, Vercel's rewrite rule handles the proxy. In development, Vite's proxy forwards `/api` to the local Express server.
 
+Set `VITE_GOOGLE_CLIENT_ID` in Vercel for Production (and Preview only when its
+origin is registered in Google Cloud). Changing it requires a new client build.
+
 ## MongoDB Atlas Setup
 
 ### Cluster Configuration
 
 1. Create an M0 (free) cluster (or run MongoDB locally for development)
 2. No Atlas Vector Search index is needed — the app does not use vector search
-3. The TTL index on `Conversation.expiresAt` is created automatically by the
-   Mongoose schema (`expireAfterSeconds: 0`); conversations expire 48h after
-   the last message, which keeps the M0 512MB footprint bounded
+3. Run the existing multi-conversation migration once so the former
+   `expiresAt_1` TTL index cannot delete history:
+   `cd server && npx tsx src/scripts/migrate-multiconvo.ts`
+4. Run the idempotent authentication migration on each environment after the
+   code deploy: `npm run migrate:auth -w server`. It backfills provider arrays,
+   rejects credential-less users, and creates the partial unique Google-subject index.
 
 ### Connection String
 
@@ -245,15 +289,16 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      // LLM calls are made server-side, so the browser only connects to its own origin.
-      connectSrc: ["'self'"],
+      connectSrc: ["'self'", "https://accounts.google.com/gsi/"],
+      frameSrc: ["'self'", "https://accounts.google.com/gsi/"],
       imgSrc: ["'self'", "data:", "blob:"],
       // Voice replies play audio fetched from /api/tts via blob: URLs.
       mediaSrc: ["'self'", "blob:"],
-      scriptSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'", "https://accounts.google.com/gsi/client"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://accounts.google.com/gsi/style"],
     },
   },
+  crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
   crossOriginEmbedderPolicy: false,
 }));
 ```
@@ -290,9 +335,17 @@ res.cookie('token', jwt, {
 // Auth routes: 5 requests per 10 minutes per IP
 authRateLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 5 });
 
-// API routes: 10 requests per 10 seconds per user
-apiRateLimiter = rateLimit({ windowMs: 10 * 1000, max: 10, keyExtractor: req => req.userId });
+// Non-generation API routes: 10 requests per 10 seconds per IP.
+// The message stream path is skipped here.
+apiRateLimiter = rateLimit({ windowMs: 10 * 1000, max: 10, skip: isMessageStream });
+
+// The one authoritative generation limit: 20 messages per minute per user.
+chatRateLimiter = rateLimit({ windowMs: 60 * 1000, max: 20, keyGenerator: req => req.userId });
 ```
+
+Loading, listing, or switching conversation history cannot spend a generation
+allowance. The client also enforces a single in-flight send so one user action
+cannot emit duplicate stream requests.
 
 ## Monitoring
 

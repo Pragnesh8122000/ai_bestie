@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { useChatStore } from '../stores/chatStore';
 import { usePersonaStore } from '../stores/personaStore';
 import { stabilizePartialMarkdown } from '../utils/markdown';
+import { getArchetypeDisplayName } from '../utils/persona';
 import MessageContent from './MessageContent';
 import VoiceOrb from './VoiceOrb';
 

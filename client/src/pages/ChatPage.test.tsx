@@ -95,6 +95,28 @@ describe('ChatPage drawer', () => {
     expect(await screen.findByRole('heading', { name: 'Lisbon trip' })).toBeInTheDocument();
   });
 
+  it('keeps explicit voice state controls coherent in the sidebar, header, and mobile drawer', async () => {
+    const user = userEvent.setup();
+    useChatStore.setState({ ttsEnabled: false });
+    render(<ChatPage />, { wrapper: MemoryRouter });
+
+    const initialControls = screen.getAllByRole('switch', { name: 'Voice replies off' });
+    expect(initialControls).toHaveLength(2);
+    expect(screen.getByText('Off · Replies are silent')).toBeInTheDocument();
+    expect(screen.getByText('Voice · Off')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /open conversations/i }));
+    const drawer = await screen.findByRole('dialog', { name: /conversations/i });
+    const drawerControl = Array.from(drawer.querySelectorAll('[role="switch"]'))[0];
+    expect(drawerControl).toHaveAttribute('aria-checked', 'false');
+    expect(drawerControl).toHaveTextContent('Off · Replies are silent');
+
+    await user.click(drawerControl);
+    expect(screen.getAllByRole('switch', { name: 'Voice replies on' })).toHaveLength(3);
+    expect(screen.getAllByText('On · Replies play aloud')).toHaveLength(2);
+    expect(screen.getByText('Voice · On')).toBeInTheDocument();
+  });
+
   it('shows the persona archetype on saved and streaming assistant message rows', async () => {
     const activeConversation = useChatStore.getState().activeConversation!;
     useChatStore.setState({

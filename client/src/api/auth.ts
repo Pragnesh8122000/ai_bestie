@@ -4,6 +4,7 @@ export interface AuthUser {
   id: string;
   email: string;
   name: string;
+  authProviders: Array<'password' | 'google'>;
   activePersonaId?: string;
   preferences?: Record<string, any>;
   createdAt?: string;
@@ -27,12 +28,19 @@ export interface LoginInput {
   password: string;
 }
 
+export interface GoogleLoginInput {
+  credential: string;
+}
+
 export const authApi = {
   register: (data: RegisterInput) =>
     apiClient.post<AuthResponse>('/auth/register', data),
 
   login: (data: LoginInput) =>
     apiClient.post<AuthResponse>('/auth/login', data),
+
+  googleLogin: (data: GoogleLoginInput) =>
+    apiClient.post<AuthResponse>('/auth/google', data),
 
   logout: () =>
     apiClient.post<{ success: boolean; message: string }>('/auth/logout'),

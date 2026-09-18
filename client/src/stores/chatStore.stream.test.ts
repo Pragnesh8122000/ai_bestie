@@ -56,6 +56,7 @@ function conversation(id: string, overrides: Record<string, unknown> = {}) {
 const initialState = useChatStore.getState();
 
 beforeEach(() => {
+  useChatStore.getState().abortStream();
   vi.clearAllMocks();
   useChatStore.setState({ ...initialState, conversations: [], activeConversation: null, activeConversationId: null, error: null });
 });
@@ -163,6 +164,94 @@ describe('sendMessage', () => {
 
     expect(useChatStore.getState().error).toBe('Reply timed out. Please try again.');
     expect(useChatStore.getState().isStreaming).toBe(false);
+  });
+
+  it('emits only one request for two same-tick sends', async () => {
+    let resolveRequest: (value: ReturnType<typeof sseResponse>) => void = () => {};
+    useChatStore.setState({
+      conversations: [conversation('a')],
+      activeConversation: { ...conversation('a'), messages: [] },
+      activeConversationId: 'a',
+    });
+    api.streamMessage.mockImplementation(
+      () => new Promise((resolve) => { resolveRequest = resolve; }),
+    );
+
+    const first = useChatStore.getState().sendMessage('only once');
+    const duplicate = useChatStore.getState().sendMessage('only once');
+
+    expect(api.streamMessage).toHaveBeenCalledTimes(1);
+    resolveRequest(sseResponse([{ type: 'done', messageId: 'm1' }]));
+    await Promise.all([first, duplicate]);
+  });
+
+  it('ignores late stream frames after switching conversations even when abort is ignored', async () => {
+    const encoder = new TextEncoder();
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const delayedStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamController = controller;
+      },
+    });
+    useChatStore.setState({
+      conversations: [conversation('a'), conversation('b')],
+      activeConversation: { ...conversation('a'), messages: [] },
+      activeConversationId: 'a',
+    });
+    api.streamMessage.mockResolvedValue({ ok: true, body: delayedStream });
+    api.get.mockResolvedValue({
+      data: {
+        data: {
+          conversation: { ...conversation('b'), messages: [] },
+          persona: { id: 'p2', name: 'Riley', archetype: 'coach', avatarId: 'a', traits: {} },
+        },
+      },
+    });
+
+    const pending = useChatStore.getState().sendMessage('question for A');
+    await vi.waitFor(() => expect(api.streamMessage).toHaveBeenCalledTimes(1));
+    await useChatStore.getState().switchConversation('b');
+
+    streamController?.enqueue(
+      encoder.encode(`data: ${JSON.stringify({ type: 'error', message: 'stale stream error' })}\n\n`),
+    );
+    streamController?.close();
+    await pending;
+
+    const state = useChatStore.getState();
+    expect(state.activeConversationId).toBe('b');
+    expect(state.activeConversation?.messages).toEqual([]);
+    expect(state.error).toBeNull();
+    expect(state.isStreaming).toBe(false);
+  });
+
+  it('surfaces an exact 429, rolls back the rejected turn, and remains sendable', async () => {
+    useChatStore.setState({
+      conversations: [conversation('a')],
+      activeConversation: { ...conversation('a'), messages: [] },
+      activeConversationId: 'a',
+    });
+    api.streamMessage.mockResolvedValueOnce({
+      ok: false,
+      status: 429,
+      json: async () => ({ message: 'Too many messages. Please slow down.' }),
+    });
+
+    await useChatStore.getState().sendMessage('rejected turn');
+
+    let state = useChatStore.getState();
+    expect(state.error).toBe('Too many messages. Please slow down.');
+    expect(state.activeConversation?.messages).toEqual([]);
+    expect(state.activeConversation?.title).toBe('New Conversation');
+    expect(state.conversations[0].title).toBe('New Conversation');
+    expect(state.isStreaming).toBe(false);
+
+    api.streamMessage.mockResolvedValueOnce(sseResponse([{ type: 'done', messageId: 'm2' }]));
+    await useChatStore.getState().sendMessage('allowed later');
+
+    state = useChatStore.getState();
+    expect(api.streamMessage).toHaveBeenCalledTimes(2);
+    expect(state.activeConversation?.messages[0].content).toBe('allowed later');
   });
 
   it('ignores an empty message and one with no active conversation', async () => {
