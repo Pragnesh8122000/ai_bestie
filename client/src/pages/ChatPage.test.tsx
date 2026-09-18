@@ -26,13 +26,19 @@ vi.mock('../api/conversation', () => ({
   },
 }));
 
+vi.mock('../api/persona', () => ({
+  personaApi: { getArchetypes: vi.fn() },
+}));
+
 import ChatPage from './ChatPage';
 import { useChatStore } from '../stores/chatStore';
 import { useAuthStore } from '../stores/authStore';
 import { usePersonaStore } from '../stores/personaStore';
 import { conversationApi } from '../api/conversation';
+import { personaApi } from '../api/persona';
 
 const api = conversationApi as unknown as Record<string, ReturnType<typeof vi.fn>>;
+const personaApiMock = personaApi as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
 // jsdom implements neither of these; ChatWindow autoscrolls on mount.
 Element.prototype.scrollIntoView = vi.fn();
@@ -65,14 +71,19 @@ beforeEach(() => {
     error: null,
     isSidebarOpen: false,
     isLoadingList: false,
+    isLoadingConversation: false,
     isStreaming: false,
   });
   useAuthStore.setState({ user: { id: 'u1', email: 'a@b.c', name: 'Tester' } as any });
   usePersonaStore.setState({
     personas: [{ id: 'p1', name: 'Sam', archetype: 'friend', avatarId: 'a' } as any],
     activePersonaId: 'p1',
+    archetypes: [],
   });
   api.list.mockResolvedValue({ data: { data: { conversations: [conversation], hasMore: false } } });
+  personaApiMock.getArchetypes.mockResolvedValue({
+    data: { data: { archetypes: [{ type: 'friend', displayName: 'The Friend', corePurpose: '', defaultTraits: {}, traitRanges: {} }] } },
+  });
   document.body.style.overflow = '';
 });
 
@@ -82,6 +93,162 @@ describe('ChatPage drawer', () => {
   it('shows the active conversation title in the header', async () => {
     render(<ChatPage />, { wrapper: MemoryRouter });
     expect(await screen.findByRole('heading', { name: 'Lisbon trip' })).toBeInTheDocument();
+  });
+
+  it('shows the persona archetype on saved and streaming assistant message rows', async () => {
+    const activeConversation = useChatStore.getState().activeConversation!;
+    useChatStore.setState({
+      activeConversation: {
+        ...activeConversation,
+        messages: [
+          {
+            _id: 'm1',
+            role: 'assistant',
+            content: 'I am here.',
+            timestamp: '2026-09-17T17:00:00.000Z',
+          },
+        ],
+      },
+      isStreaming: true,
+      streamingContent: 'Still listening.',
+    });
+
+    render(<ChatPage />, { wrapper: MemoryRouter });
+
+    expect(await screen.findAllByText('sam · the friend')).toHaveLength(2);
+  });
+
+  it('hydrates a saved conversation persona after a cold load', async () => {
+    const user = userEvent.setup();
+    const current = useChatStore.getState().activeConversation!;
+    const saved = {
+      ...current,
+      id: 'b',
+      title: 'Coach check-in',
+      personaId: 'p2',
+      messages: [],
+    };
+    usePersonaStore.setState({ personas: [], activePersonaId: null });
+    useChatStore.setState({ conversations: [current, saved] });
+    api.list.mockResolvedValue({
+      data: { data: { conversations: [current, saved], hasMore: false } },
+    });
+    api.get.mockResolvedValue({
+      data: {
+        data: {
+          conversation: saved,
+          persona: {
+            id: 'p2',
+            name: 'Riley',
+            archetype: 'coach',
+            avatarId: 'coach-female-01',
+            traits: {},
+          },
+        },
+      },
+    });
+
+    render(<ChatPage />, { wrapper: MemoryRouter });
+    await user.click(await screen.findByTitle('Coach check-in'));
+
+    expect(await screen.findByText('Riley')).toBeInTheDocument();
+    expect(screen.getByText('The Coach')).toBeInTheDocument();
+  });
+
+  it('does not bootstrap the default while a saved conversation is loading', async () => {
+    const user = userEvent.setup();
+    let resolveSaved: (value: unknown) => void = () => {};
+    const current = useChatStore.getState().activeConversation!;
+    const saved = {
+      ...current,
+      id: 'b',
+      title: 'Coach check-in',
+      personaId: 'p2',
+      messages: [],
+    };
+    useChatStore.setState({ conversations: [current, saved] });
+    api.list.mockResolvedValue({
+      data: { data: { conversations: [current, saved], hasMore: false } },
+    });
+    api.get.mockImplementation(() => new Promise((resolve) => { resolveSaved = resolve; }));
+    api.getDefault.mockResolvedValue({
+      data: {
+        data: {
+          conversation: { ...current, id: 'default', messages: [] },
+          persona: {
+            id: 'p1',
+            name: 'Sam',
+            archetype: 'friend',
+            avatarId: 'friend-male-01',
+            traits: {},
+          },
+        },
+      },
+    });
+
+    render(<ChatPage />, { wrapper: MemoryRouter });
+    await user.click(await screen.findByTitle('Coach check-in'));
+
+    expect(api.getDefault).not.toHaveBeenCalled();
+
+    act(() => {
+      resolveSaved({
+        data: {
+          data: {
+            conversation: saved,
+            persona: {
+              id: 'p2',
+              name: 'Riley',
+              archetype: 'coach',
+              avatarId: 'coach-female-01',
+              traits: {},
+            },
+          },
+        },
+      });
+    });
+
+    expect(await screen.findByText('Riley')).toBeInTheDocument();
+    expect(useChatStore.getState().activeConversationId).toBe('b');
+  });
+
+  it('attempts default bootstrap once when the request fails', async () => {
+    useChatStore.setState({
+      activeConversation: null,
+      activeConversationId: null,
+      isLoadingConversation: false,
+    });
+    api.getDefault.mockRejectedValue({ response: { data: { message: 'offline' } } });
+
+    render(<ChatPage />, { wrapper: MemoryRouter });
+
+    expect(await screen.findByText('offline')).toBeInTheDocument();
+    await waitFor(() => expect(api.getDefault).toHaveBeenCalledTimes(1));
+  });
+
+  it('keeps the persona type visible when archetype metadata fails', async () => {
+    const activeConversation = useChatStore.getState().activeConversation!;
+    usePersonaStore.setState({
+      personas: [{ id: 'p1', name: 'Morgan', archetype: 'therapist', avatarId: 'a' } as any],
+      archetypes: [],
+    });
+    useChatStore.setState({
+      activeConversation: {
+        ...activeConversation,
+        messages: [{
+          _id: 'm1',
+          role: 'assistant',
+          content: 'Take your time.',
+          timestamp: '2026-09-17T17:00:00.000Z',
+        }],
+      },
+    });
+    personaApiMock.getArchetypes.mockRejectedValue(new Error('offline'));
+
+    render(<ChatPage />, { wrapper: MemoryRouter });
+
+    expect(await screen.findByText('The Therapist')).toBeInTheDocument();
+    expect(screen.getByText('morgan · the therapist')).toBeInTheDocument();
   });
 
   it('opens the drawer and locks body scroll, restoring it on close', async () => {

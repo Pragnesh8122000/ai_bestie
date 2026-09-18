@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { useChatStore } from '../stores/chatStore';
 import { usePersonaStore } from '../stores/personaStore';
+import { getArchetypeDisplayName } from '../utils/persona';
 import VoiceOrb from './VoiceOrb';
 
 const STATUS_LABEL: Record<'idle' | 'thinking' | 'speaking' | 'listening', string> = {
@@ -29,10 +30,17 @@ function clock(iso?: string): string {
 export default function ChatWindow() {
   const { activeConversation, avatarState, isStreaming, streamingContent, sendMessage, isLoadingConversation } =
     useChatStore();
-  const { personas } = usePersonaStore();
+  const { personas, archetypes, fetchArchetypes } = usePersonaStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const persona = personas.find((p) => p.id === activeConversation?.personaId);
+  const archetypeLabel = persona
+    ? getArchetypeDisplayName(persona.archetype, archetypes)
+    : undefined;
+
+  useEffect(() => {
+    fetchArchetypes();
+  }, [fetchArchetypes]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -60,6 +68,11 @@ export default function ChatWindow() {
           <p className="font-display text-3xl font-semibold text-linen sm:text-4xl">
             {persona?.name || 'Sam'}
           </p>
+          {archetypeLabel && (
+            <p className="mt-1 font-mono text-[11px] uppercase tracking-[0.18em] text-linen-dim/70">
+              {archetypeLabel}
+            </p>
+          )}
           <p className="mt-2 font-mono text-[12px] uppercase tracking-[0.22em] text-linen-dim">
             {STATUS_LABEL[avatarState]}
           </p>
@@ -125,6 +138,7 @@ export default function ChatWindow() {
                       <div className="mb-1 flex items-baseline gap-2">
                         <span className="font-mono text-[10px] tracking-[0.12em] text-linen-dim/50">
                           {(persona?.name || 'sam').toLowerCase()}
+                          {archetypeLabel ? ` · ${archetypeLabel.toLowerCase()}` : ''}
                         </span>
                         <span className="font-mono text-[10px] tracking-[0.12em] text-linen-dim/50">
                           {time || 'now'}
@@ -151,6 +165,7 @@ export default function ChatWindow() {
                   <div className="mb-1 flex items-baseline gap-2">
                     <span className="font-mono text-[10px] tracking-[0.12em] text-linen-dim/50">
                       {(persona?.name || 'sam').toLowerCase()}
+                      {archetypeLabel ? ` · ${archetypeLabel.toLowerCase()}` : ''}
                     </span>
                     <span className="font-mono text-[10px] tracking-[0.12em] text-linen-dim/50">
                       now

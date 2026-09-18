@@ -41,8 +41,26 @@ function conversation(id: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
-function detail(id: string, overrides: Record<string, unknown> = {}) {
-  return { data: { data: { conversation: { ...conversation(id), messages: [], ...overrides } } } };
+function detail(
+  id: string,
+  overrides: Record<string, unknown> = {},
+  personaOverrides: Record<string, unknown> = {},
+) {
+  return {
+    data: {
+      data: {
+        conversation: { ...conversation(id), messages: [], ...overrides },
+        persona: {
+          id: 'p1',
+          name: 'Sam',
+          archetype: 'friend',
+          avatarId: 'friend-male-01',
+          traits: {},
+          ...personaOverrides,
+        },
+      },
+    },
+  };
 }
 
 const initialState = useChatStore.getState();
@@ -138,6 +156,40 @@ describe('switchConversation', () => {
 
     expect(useChatStore.getState().activeConversationId).toBe('b');
     expect(useChatStore.getState().activeConversation?.id).toBe('b');
+  });
+
+  it('discards a late default response after switching to a saved conversation', async () => {
+    let resolveDefault: (value: unknown) => void = () => {};
+    api.getDefault.mockImplementation(() => new Promise((resolve) => { resolveDefault = resolve; }));
+    api.get.mockResolvedValue(detail(
+      'coach-chat',
+      { personaId: 'p2' },
+      { id: 'p2', name: 'Riley', archetype: 'coach', avatarId: 'coach-female-01' },
+    ));
+
+    const defaultLoad = useChatStore.getState().openDefaultConversation();
+    await useChatStore.getState().switchConversation('coach-chat');
+
+    resolveDefault({
+      data: {
+        data: {
+          conversation: { ...conversation('default-chat'), messages: [] },
+          persona: {
+            id: 'p1',
+            name: 'Sam',
+            archetype: 'friend',
+            avatarId: 'friend-male-01',
+            traits: {},
+          },
+        },
+      },
+    });
+    await defaultLoad;
+
+    const state = useChatStore.getState();
+    expect(state.activeConversationId).toBe('coach-chat');
+    expect(state.activeConversation?.id).toBe('coach-chat');
+    expect(usePersonaStore.getState().personas.map((persona) => persona.id)).toEqual(['p2']);
   });
 
   it('recovers to the default conversation when the target is gone', async () => {

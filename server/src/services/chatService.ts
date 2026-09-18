@@ -333,15 +333,24 @@ export async function archiveConversation(userId: string, conversationId: string
  * This is the entry point the client auto-opens on load.
  */
 export async function ensureDefaultConversation(userId: string) {
-  const persona = await ensureDefaultPersona(userId);
+  const defaultPersona = await ensureDefaultPersona(userId);
 
   let conversation = await Conversation.findOne({ userId, isArchived: false })
     .sort({ lastMessageAt: -1 })
     .lean();
 
+  let persona = defaultPersona;
+
   if (!conversation) {
-    const created = await createConversation(userId, persona._id.toHexString(), persona.avatarId);
+    const created = await createConversation(
+      userId,
+      defaultPersona._id.toHexString(),
+      defaultPersona.avatarId,
+    );
     conversation = await Conversation.findById(created._id).lean();
+  } else if (conversation.personaId?.toString() !== defaultPersona._id.toString()) {
+    const actualPersona = await Persona.findById(conversation.personaId);
+    if (actualPersona) persona = actualPersona;
   }
 
   return { conversation: serializeConversation(conversation), persona };

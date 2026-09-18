@@ -15,7 +15,8 @@ export default function ChatPage() {
   const { user, logout } = useAuthStore();
   const openDefaultConversation = useChatStore((s) => s.openDefaultConversation);
   const abortStream = useChatStore((s) => s.abortStream);
-  const hasConversation = useChatStore((s) => s.activeConversation !== null);
+  const activeConversationId = useChatStore((s) => s.activeConversationId);
+  const isLoadingConversation = useChatStore((s) => s.isLoadingConversation);
   const activeTitle = useChatStore((s) => s.activeConversation?.title);
   const ttsEnabled = useChatStore((s) => s.ttsEnabled);
   const toggleTts = useChatStore((s) => s.toggleTts);
@@ -26,12 +27,15 @@ export default function ChatPage() {
 
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const defaultBootstrapAttempted = useRef(false);
 
   // Only auto-open if there's no conversation yet (avoids refetch + the
   // "connecting" flash on every route-away-and-back).
   useEffect(() => {
-    if (!hasConversation) openDefaultConversation();
-  }, [openDefaultConversation, hasConversation]);
+    if (defaultBootstrapAttempted.current || activeConversationId || isLoadingConversation) return;
+    defaultBootstrapAttempted.current = true;
+    openDefaultConversation();
+  }, [openDefaultConversation, activeConversationId, isLoadingConversation]);
 
   // Close the mobile drawer when the viewport crosses into desktop, otherwise
   // the body scroll lock below would survive with no visible way to release it.

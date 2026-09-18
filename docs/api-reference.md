@@ -442,10 +442,22 @@ Get a conversation with all messages.
       ],
       "createdAt": "2024-01-15T10:30:00Z",
       "lastMessageAt": "2024-01-15T10:31:05Z"
+    },
+    "persona": {
+      "id": "64f2a3b4c5d6e7f8a9b0c1d2",
+      "name": "Atlas",
+      "archetype": "mentor",
+      "avatarId": "mentor-male-01",
+      "traits": { "directness": 7, "warmth": 6, "proactivity": 7, "depth": 8, "accountability": 7 },
+      "createdAt": "2024-01-15T10:30:00Z",
+      "updatedAt": "2024-01-15T10:30:00Z"
     }
   }
 }
 ```
+
+Includes the conversation's own persona (not necessarily the user's default), so the client can
+display the correct name and archetype after a hard refresh.
 
 ---
 

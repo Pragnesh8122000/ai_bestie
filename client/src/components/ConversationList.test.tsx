@@ -103,7 +103,18 @@ describe('ConversationList', () => {
       data: { data: { conversations: [conversation('a'), conversation('b')], hasMore: false } },
     });
     api.get.mockResolvedValue({
-      data: { data: { conversation: { ...conversation('b'), messages: [] } } },
+      data: {
+        data: {
+          conversation: { ...conversation('b'), messages: [] },
+          persona: {
+            id: 'p1',
+            name: 'Sam',
+            archetype: 'friend',
+            avatarId: 'a',
+            traits: {},
+          },
+        },
+      },
     });
     useChatStore.setState({ activeConversationId: 'a', isSidebarOpen: true });
 

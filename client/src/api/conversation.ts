@@ -1,4 +1,5 @@
 import apiClient from './client';
+import type { Persona } from './persona';
 
 export interface Conversation {
   id: string;
@@ -36,6 +37,7 @@ interface ConversationDetailResponse {
   success: boolean;
   data: {
     conversation: Conversation & { messages: Message[] };
+    persona: Persona;
   };
 }
 

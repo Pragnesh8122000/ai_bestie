@@ -181,8 +181,17 @@ personaSchema.methods.getSystemPrompt = function (): string {
 
 ## Persona in the Simple Phase
 
-This phase ships a single hard-coded "Friend" persona named **Sam**, created
-on first login via `personaService.ensureDefaultPersona()`. The 4-archetype
-selection wizard described in earlier planning docs was not built for this
-phase — the app opens straight into a chat with Sam. The archetype/trait
-machinery above remains in place and could be exposed later.
+On first login, `personaService.ensureDefaultPersona()` creates a single
+default "Friend" persona named **Sam** so the app can open straight into a
+chat. From there, `CreatePersonaPage` lets a user pick any of the 4
+archetypes (grouped by category in the avatar grid) to create additional
+personas — the archetype/trait machinery above is exercised end-to-end, not
+just reserved for later.
+
+Every persona's archetype is surfaced wherever the persona itself is shown:
+as a label on each avatar in the create-persona picker, and in the chat
+header and message rows (`getArchetypeDisplayName()` in
+`client/src/utils/persona.ts`, falling back to a titlecased archetype name if
+`/api/personas/archetypes` hasn't loaded yet). Conversation list/detail
+responses include the conversation's own persona so this stays correct after
+a hard refresh, even for a saved conversation that isn't the default one.

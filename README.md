@@ -59,7 +59,8 @@ ai-bestie/
 │   │   │   ├── chatStore.ts   # Chat + avatar state machine
 │   │   │   └── personaStore.ts # Persona CRUD state
 │   │   ├── utils/
-│   │   │   └── speech.ts      # Web Speech STT + streaming-sentence TTS
+│   │   │   ├── speech.ts      # Web Speech STT + streaming-sentence TTS
+│   │   │   └── persona.ts     # Archetype display-name lookup (with fallback)
 │   │   ├── styles/
 │   │   │   └── globals.css    # Tailwind imports + animation keyframes
 │   │   ├── App.tsx            # Routes + auth guards
