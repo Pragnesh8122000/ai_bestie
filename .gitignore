@@ -35,3 +35,9 @@ coverage/
 # Misc
 .cache/
 .temp/
+
+# Agent/tool state and local instruction directories
+**/.claude/
+**/.claude-flow/
+**/.lavish/
+**/.agents/
