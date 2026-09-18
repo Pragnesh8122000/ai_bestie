@@ -161,7 +161,7 @@ personaStore.ts (Zustand)
 
 chatStore.ts (Zustand)
 ├── state: conversations[], activeConversation, avatarState, isStreaming, streamingContent
-├── actions: fetchConversations, openConversation, createConversation, deleteConversation, sendMessage
+├── actions: fetchConversations, openDefaultConversation, switchConversation, createConversation, deleteConversation, sendMessage
 └── manages: SSE ReadableStream parsing, avatar state machine
 ```
 
