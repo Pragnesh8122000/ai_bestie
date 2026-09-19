@@ -5,6 +5,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - The repository uses npm workspaces; run `npm test` and `npm run build` from the root for the complete server/client validation.
 - Treat `docs/deployment.md` as authoritative for Google Identity Services environment/origin setup and one-off database migrations.
 - Conversation switching, stale-stream isolation, and the one authoritative chat-generation quota are behaviorally pinned in `client/src/stores/chatStore*.test.ts` and `server/src/middleware/auth.test.ts`.
+- Voice typing (`client/src/utils/speech.ts`) has no server-side transcription fallback: `server/src/config/index.ts`'s `openaiApiKey` is unused/unwired to any Whisper endpoint. Brave exposes `webkitSpeechRecognition` like Chrome/Safari but disables the Google backend behind it, so recognition fails at `.start()` with an `onerror` `'network'` event rather than at feature-detection — see `ChatInput.tsx`'s error-code handling and `speech.test.ts`'s "speech-to-text" suite before changing STT behavior.
 
 ## Maintaining this file
 
