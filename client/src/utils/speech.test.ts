@@ -559,3 +559,192 @@ describe('inter-sentence gap', () => {
     expect(new Set(spoken.map((s) => s.engine))).toEqual(new Set(['remote']));
   });
 });
+
+/**
+ * Regression tests for the Brave/Safari voice-typing divergence.
+ *
+ * Brave ships the `webkitSpeechRecognition` constructor (it's Chromium), so
+ * `isSTTSupported()` is true there just like Chrome and Safari — the failure
+ * shows up only once `.start()` runs, as an `onerror` event with
+ * `error: 'network'`, because Brave disables the Google backend that powers
+ * the API. These tests fake that constructor directly so both the
+ * Brave-like (network error) and Safari-like (working) paths are covered
+ * without needing a real browser.
+ */
+describe('speech-to-text', () => {
+  class FakeRecognition {
+    lang = '';
+    continuous = false;
+    interimResults = false;
+    onresult: ((e: { results: ArrayLike<{ 0: { transcript: string }; isFinal: boolean; length: number }> }) => void) | null = null;
+    onerror: ((e: { error: string }) => void) | null = null;
+    onend: (() => void) | null = null;
+    started = false;
+    stopped = false;
+    start() {
+      this.started = true;
+    }
+    stop() {
+      this.stopped = true;
+      // Real engines fire onend once stop() completes.
+      queueMicrotask(() => this.onend?.());
+    }
+  }
+
+  function result(transcript: string, isFinal: boolean) {
+    return { 0: { transcript }, isFinal, length: 1 };
+  }
+
+  afterEach(() => {
+    delete (globalThis as any).SpeechRecognition;
+    delete (globalThis as any).webkitSpeechRecognition;
+  });
+
+  it('reports unsupported when neither constructor exists', async () => {
+    await loadFreshModule();
+    expect(speech.isSTTSupported()).toBe(false);
+  });
+
+  it('reports supported via webkitSpeechRecognition, same as Brave and Safari expose it', async () => {
+    (globalThis as any).webkitSpeechRecognition = FakeRecognition;
+    await loadFreshModule();
+    expect(speech.isSTTSupported()).toBe(true);
+  });
+
+  it('resolves with the final transcript on the Safari-like working path', async () => {
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+    };
+    await loadFreshModule();
+
+    const interim: string[] = [];
+    const session = speech.listenOnce('en-US', (t) => interim.push(t));
+    instance.onresult?.({ results: [result('hello world', true)] });
+    instance.onend?.();
+
+    await expect(session.promise).resolves.toBe('hello world');
+  });
+
+  it('surfaces interim results while listening before the final one arrives', async () => {
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+    };
+    await loadFreshModule();
+
+    const interim: string[] = [];
+    const session = speech.listenOnce('en-US', (t) => interim.push(t));
+    instance.onresult?.({ results: [result('hel', false)] });
+    instance.onresult?.({ results: [result('hello', true)] });
+    instance.onend?.();
+
+    expect(interim).toEqual(['hel', 'hello']);
+    await expect(session.promise).resolves.toBe('hello');
+  });
+
+  it('rejects with "network" on the Brave-like path (constructor present, backend blocked)', async () => {
+    let instance!: FakeRecognition;
+    (globalThis as any).SpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+    };
+    await loadFreshModule();
+
+    const session = speech.listenOnce('en-US');
+    instance.onerror?.({ error: 'network' });
+
+    await expect(session.promise).rejects.toThrow('network');
+  });
+
+  it('rejects with "not-allowed" when mic permission is denied', async () => {
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+    };
+    await loadFreshModule();
+
+    const session = speech.listenOnce('en-US');
+    instance.onerror?.({ error: 'not-allowed' });
+
+    await expect(session.promise).rejects.toThrow('not-allowed');
+  });
+
+  it('rejects with "audio-capture" when no microphone device is available', async () => {
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+    };
+    await loadFreshModule();
+
+    const session = speech.listenOnce('en-US');
+    instance.onerror?.({ error: 'audio-capture' });
+
+    await expect(session.promise).rejects.toThrow('audio-capture');
+  });
+
+  it('rejects immediately when no recognition constructor exists at all', async () => {
+    await loadFreshModule();
+    const session = speech.listenOnce('en-US');
+    await expect(session.promise).rejects.toThrow('not supported');
+    expect(session.stop).toBeTypeOf('function');
+    // Calling stop() on the unsupported no-op session must not throw.
+    expect(() => session.stop()).not.toThrow();
+  });
+
+  it('stop() ends the session with whatever was transcribed so far, without rejecting', async () => {
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+    };
+    await loadFreshModule();
+
+    const session = speech.listenOnce('en-US');
+    instance.onresult?.({ results: [result('partial', true)] });
+    session.stop();
+    await flush(10);
+
+    expect(instance.stopped).toBe(true);
+    await expect(session.promise).resolves.toBe('partial');
+  });
+
+  it('auto-stops after maxMs so the mic can never get stuck listening forever', async () => {
+    vi.useFakeTimers();
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+      stop() {
+        this.stopped = true;
+        this.onend?.();
+      }
+    };
+    await loadFreshModule();
+
+    const session = speech.listenOnce('en-US', undefined, 8000);
+    vi.advanceTimersByTime(8000);
+
+    expect(instance.stopped).toBe(true);
+    await expect(session.promise).resolves.toBe('');
+    vi.useRealTimers();
+  });
+});

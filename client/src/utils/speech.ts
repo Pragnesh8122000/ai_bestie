@@ -438,31 +438,47 @@ function playItem(item: QueueItem, mySession: number): Promise<void> {
 
 /* ------------------------------- STT ------------------------------- */
 
+/** A single listen attempt: its result plus a way to cancel it early. */
+export interface ListenSession {
+  promise: Promise<string>;
+  /** Stop recognition early (e.g. component unmount) without rejecting. */
+  stop: () => void;
+}
+
 /**
  * Listen once and resolve with the transcribed text. `onInterim` (if given)
  * receives live partial transcriptions for UI feedback. Auto-stops after
  * `maxMs` so the button can't get stuck in "Listening…" forever.
+ *
+ * Returns a `stop()` handle alongside the promise so a caller can end the
+ * recognition session (e.g. on component unmount) without treating that as
+ * an error — `stop()` ends the session the same way the browser's own
+ * silence/timeout does, resolving with whatever was transcribed so far.
  */
 export function listenOnce(
   lang = 'en-US',
   onInterim?: (text: string) => void,
   maxMs = 8000,
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const Ctor = getRecognitionCtor();
-    if (!Ctor) {
-      reject(new Error('Speech recognition not supported in this browser'));
-      return;
-    }
+): ListenSession {
+  const Ctor = getRecognitionCtor();
+  if (!Ctor) {
+    return {
+      promise: Promise.reject(new Error('Speech recognition not supported in this browser')),
+      stop: () => {},
+    };
+  }
 
-    const recognition = new Ctor();
-    recognition.lang = lang;
-    recognition.continuous = false;
-    recognition.interimResults = true;
+  const recognition = new Ctor();
+  recognition.lang = lang;
+  recognition.continuous = false;
+  recognition.interimResults = true;
 
-    let finalTranscript = '';
-    let settled = false;
-    const timer = setTimeout(() => {
+  let finalTranscript = '';
+  let settled = false;
+  let timer: ReturnType<typeof setTimeout>;
+
+  const promise = new Promise<string>((resolve, reject) => {
+    timer = setTimeout(() => {
       try {
         recognition.stop();
       } catch {
@@ -496,4 +512,16 @@ export function listenOnce(
 
     recognition.start();
   });
+
+  return {
+    promise,
+    stop: () => {
+      if (settled) return;
+      try {
+        recognition.stop();
+      } catch {
+        /* ignore */
+      }
+    },
+  };
 }
