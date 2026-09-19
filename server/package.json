@@ -9,6 +9,7 @@
     "lint": "eslint src/",
     "test": "vitest run",
     "seed": "tsx src/seed.ts",
+    "migrate:auth": "tsx src/scripts/migrate-auth-providers.ts",
     "download-tts-model": "tsx src/scripts/download-tts-model.ts",
     "verify-voice": "tsx src/scripts/verify-voice.mts"
   },
@@ -19,6 +20,7 @@
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "express-rate-limit": "^7.5.1",
+    "google-auth-library": "^11.1.0",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.15.1",
@@ -35,6 +37,8 @@
     "@types/jsonwebtoken": "^9.0.9",
     "@types/passport": "^1.0.17",
     "@types/passport-local": "^1.0.38",
+    "@types/supertest": "^7.2.1",
+    "supertest": "^7.2.2",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
     "vitest": "^3.2.3"

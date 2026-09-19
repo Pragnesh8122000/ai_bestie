@@ -5,7 +5,9 @@ import { User } from '../models/User';
 import { generateToken, setTokenCookie, clearTokenCookie } from '../utils/jwt';
 import { catchAsync, AppError } from '../utils/errors';
 import { authRateLimiter, requireAuth } from '../middleware/auth';
-import { registerSchema, loginSchema } from '../validations/auth';
+import { registerSchema, loginSchema, googleLoginSchema } from '../validations/auth';
+import { authenticateGoogleCredential } from '../services/googleAuthService';
+import { serializeAuthUser } from '../utils/authUser';
 
 const router = Router();
 
@@ -47,7 +49,7 @@ router.post(
       email: input.email.toLowerCase(),
       password: input.password,
       name: input.name,
-      authProvider: 'email',
+      authProviders: ['password'],
     });
 
     const token = generateToken(user.id);
@@ -56,11 +58,7 @@ router.post(
     res.status(201).json({
       success: true,
       data: {
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-        },
+        user: serializeAuthUser(user),
       },
     });
   }),
@@ -98,14 +96,43 @@ router.post(
       res.json({
         success: true,
         data: {
-          user: {
-            id: user.id,
-            email: user.email,
-            name: user.name,
-          },
+          user: serializeAuthUser(user),
         },
       });
     })(req, res, next);
+  }),
+);
+
+// Google Identity Services ID-token login. The browser-provided credential is
+// never decoded or trusted here; googleAuthService verifies it against the
+// configured Web client ID before resolving or creating a local account.
+router.post(
+  '/google',
+  authRateLimiter,
+  catchAsync(async (req, res, next) => {
+    let input;
+    try {
+      input = googleLoginSchema.parse(req.body);
+    } catch (error) {
+      if (error instanceof ZodError) {
+        res.status(400).json({
+          success: false,
+          message: 'Validation error',
+          errors: formatZodError(error),
+        });
+        return;
+      }
+      return next(error);
+    }
+
+    const user = await authenticateGoogleCredential(input.credential);
+    const token = generateToken(user.id);
+    setTokenCookie(res, token);
+
+    res.json({
+      success: true,
+      data: { user: serializeAuthUser(user) },
+    });
   }),
 );
 
@@ -124,7 +151,7 @@ router.get(
   '/me',
   requireAuth,
   catchAsync(async (req, res) => {
-    const user = await User.findById(req.userId).select('-password');
+    const user = await User.findById(req.userId);
     if (!user) {
       throw new AppError('User not found', 404);
     }
@@ -132,14 +159,7 @@ router.get(
     res.json({
       success: true,
       data: {
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          activePersonaId: user.activePersonaId,
-          preferences: user.preferences,
-          createdAt: user.createdAt,
-        },
+        user: serializeAuthUser(user),
       },
     });
   }),

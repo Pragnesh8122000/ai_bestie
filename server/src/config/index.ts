@@ -52,6 +52,11 @@ export const config = {
     secret: process.env.JWT_SECRET || 'dev-secret-change-in-production',
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
   },
+  google: {
+    // Public OAuth 2.0 Web client ID shared with the SPA. An empty value keeps
+    // Google sign-in safely disabled; email/password authentication still works.
+    clientId: process.env.GOOGLE_CLIENT_ID?.trim() || '',
+  },
   llm: {
     // Primary: Google Gemini (free tier) via its OpenAI-compatible endpoint.
     // Get a free key at https://aistudio.google.com/apikey

@@ -10,12 +10,12 @@
 │           │      │           │      │               │
 │ _id       │      │ _id       │      │ _id           │
 │ email     │      │ userId ──►│      │ userId ──►    │
-│ password  │      │ name      │      │ personaId ──► │
-│ name      │      │ archetype │      │ avatarId      │
-│ activeP.  │      │ avatarId  │      │ title         │
-│ prefs     │      │ traits{}  │      │ messages[]    │
+│ password? │      │ name      │      │ personaId ──► │
+│ providers │      │ archetype │      │ avatarId      │
+│ googleSub?│      │ avatarId  │      │ title         │
+│ name      │      │ traits{}  │      │ messages[]    │
+│ prefs     │      │           │      │ archived      │
 └──────────┘      └──────────┘      │ lastMessageAt │
-                                       │ expiresAt    │
                                        └──────────────┘
 
 Only three collections: User, Persona, Conversation. There are no
@@ -31,9 +31,10 @@ SemanticMemory / EpisodicMemory collections (that memory design was removed).
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
 | `email` | String | required, unique, lowercase, trimmed | User's email |
-| `password` | String | required, min 8 chars | bcrypt-hashed password |
+| `password` | String | hidden by default, min 8 chars | bcrypt hash; present only when `password` is a provider |
 | `name` | String | required, trimmed | Display name |
-| `authProvider` | String | default: 'local' | Auth provider (future: Google) |
+| `authProviders` | String[] | enum: password/google, non-empty | Honest set of usable login methods |
+| `googleSubject` | String | optional, partial unique | Stable Google `sub`; required for Google accounts |
 | `activePersonaId` | ObjectId | ref: Persona | Currently selected persona |
 | `preferences` | Mixed | default: {} | User preferences (theme, etc.) |
 | `createdAt` | Date | auto | Creation timestamp |
@@ -41,13 +42,19 @@ SemanticMemory / EpisodicMemory collections (that memory design was removed).
 
 **Hooks:**
 - `pre('save')` — Hashes password with bcrypt (12 salt rounds) if modified
-- `post('save')` — Error handler for duplicate key (11000) → throws AppError(409)
+- `pre('validate')` — Requires a password or Google subject for each declared provider
 
 **Methods:**
-- `comparePassword(candidate)` — bcrypt comparison, returns boolean
+- `comparePassword(candidate)` — bcrypt comparison for password accounts; always false for Google-only users
 
 **Indexes:**
 - `{ email: 1 }` — unique, for login lookup
+- `{ googleSubject: 1 }` — partial unique for documents where the stable subject is a string
+
+Existing users are backfilled idempotently with `npm run migrate:auth -w server`.
+The migration derives providers from durable credentials, removes the legacy
+single-provider label, refuses accounts with no usable credential, and creates
+the partial unique index.
 
 ---
 
@@ -117,14 +124,14 @@ SemanticMemory / EpisodicMemory collections (that memory design was removed).
 | `messages.timestamp` | Date | default: Date.now | When sent |
 | `messages.tokenCount` | Number | default: 0 | Token count (reserved for future use) |
 | `lastMessageAt` | Date | default: Date.now | Last activity time |
-| `expiresAt` | Date | default: 48h from now | TTL index |
+| `messageCount` | Number | default: 0 | Denormalized list count |
+| `lastMessagePreview` | String | max 120 | Denormalized sidebar preview |
+| `isArchived` | Boolean | default: false | Soft-delete state |
+| `deletedAt` | Date/null | default: null | Soft-delete timestamp |
 | `createdAt` | Date | auto | Creation timestamp |
 | `updatedAt` | Date | auto | Last update timestamp |
 
 **Important:** Message sub-documents use `_id: false` to reduce document size.
-
-**Hooks:**
-- TTL index on `expiresAt` — MongoDB auto-deletes conversations after 48 hours
 
 **Methods:**
 - `addMessage(role, content, tokenCount?)` — Push a message with defaults
@@ -135,8 +142,7 @@ SemanticMemory / EpisodicMemory collections (that memory design was removed).
 > conversation can't clobber each other.
 
 **Indexes:**
-- `{ userId: 1, lastMessageAt: -1 }` — for listing user's conversations sorted by recent
-- `{ expiresAt: 1 }` — TTL index for auto-expiration
+- `{ userId: 1, isArchived: 1, lastMessageAt: -1 }` — active conversation list sorted by recency
 
 **Example document:**
 ```json
@@ -160,7 +166,10 @@ SemanticMemory / EpisodicMemory collections (that memory design was removed).
     }
   ],
   "lastMessageAt": "2024-01-15T10:31:05Z",
-  "expiresAt": "2024-01-17T10:30:00Z",
+  "messageCount": 2,
+  "lastMessagePreview": "That's a big decision. What's driving this thought?",
+  "isArchived": false,
+  "deletedAt": null,
   "createdAt": "2024-01-15T10:30:00Z"
 }
 ```
@@ -181,15 +190,15 @@ actually ships.
 
 ## Data Lifecycle
 
-### Conversation TTL
+### Conversation retention
 
-Conversations auto-expire 48 hours after the last message via the MongoDB TTL
-index on `expiresAt` (reset to `now + 48h` on each new message). This keeps the
-database footprint small — important for the free-tier M0 512MB cluster. There
-is no extraction into any other collection.
+Conversation history is permanent until the supported soft-delete lifecycle
+archives it. The former `expiresAt_1` TTL index deleted idle chats after 48
+hours and must be removed once with the existing multi-conversation migration:
 
 ```
-Create conversation → expiresAt = now + 48h
-Each message: lastMessageAt = now, expiresAt = now + 48h (atomic $set)
-MongoDB TTL thread deletes expired documents every ~60 seconds
+cd server && npx tsx src/scripts/migrate-multiconvo.ts
 ```
+
+Already TTL-deleted data cannot be recovered. Stale `expiresAt` fields are
+harmless after the destructive index is gone.

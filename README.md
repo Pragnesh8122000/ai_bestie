@@ -9,6 +9,7 @@ AI Bestie is a full-stack web application where users create personalized AI com
 - **4 Companion Archetypes** — Mentor, Friend, Therapist, Coach — each with unique voice, traits, and behavioral rules
 - **5-Trait Personality Sliders** — Fine-tune directness, warmth, proactivity, depth, and accountability within archetype bounds
 - **Real-Time Streaming Chat** — Token-by-token SSE streaming with Gemini Flash (free tier, primary) falling back to OpenRouter (free models), avatar state animations (idle → thinking → speaking)
+- **Password + Google Sign-In** — Google Identity Services ID tokens are verified server-side, then reuse the same HTTP-only JWT session as password accounts
 - **Voice Conversation** — Mic input (browser Web Speech API) + spoken replies. Voice replies use a neural TTS (Kokoro, free + open-source, runs in-process) and automatically fall back to the browser speechSynthesis voice if the model isn't downloaded, so you can always talk to your character
 - **Session Memory** — Last 20 messages kept in the conversation for context
 - **5-Layer System Prompts** — Identity → Voice → Rules → Context → Calibration, with Chain-of-Persona self-check
@@ -25,7 +26,7 @@ AI Bestie is a full-stack web application where users create personalized AI com
 | **Backend** | Express 5 | REST API + SSE streaming |
 | **Database** | MongoDB (local or Atlas free tier) | Document store |
 | **ODM** | Mongoose 8 | Schema validation, hooks, virtuals |
-| **Auth** | Passport.js + JWT | HTTP-only cookie auth (7-day expiry) |
+| **Auth** | Passport.js + Google Identity Services + JWT | Password/Google login, HTTP-only cookie session (7-day expiry) |
 | **Validation** | Zod 3 | API input validation |
 | **LLM (Chat)** | Gemini Flash (free) → OpenRouter (free) | Streaming conversation, primary + fallback |
 | **Voice (STT)** | Web Speech API | Mic → text input |
@@ -40,13 +41,15 @@ ai-bestie/
 │   ├── src/
 │   │   ├── api/               # Axios client + API modules
 │   │   │   ├── client.ts      # Base axios instance (withCredentials)
-│   │   │   ├── auth.ts        # Auth API (register/login/logout/me)
+│   │   │   ├── auth.ts        # Auth API (register/login/Google/logout/me)
 │   │   │   ├── avatar.ts      # Avatar list API
 │   │   │   ├── conversation.ts # Conversation + SSE streaming API
 │   │   │   └── persona.ts    # Persona CRUD API
 │   │   ├── components/        # Reusable UI components
 │   │   │   ├── ChatInput.tsx  # Auto-resize textarea + mic + send
 │   │   │   ├── ChatWindow.tsx # Message list + streaming cursor + orb
+│   │   │   ├── GoogleSignInButton.tsx # Google Identity Services UI
+│   │   │   ├── VoiceModeControl.tsx # Accessible On/Off TTS switch
 │   │   │   └── VoiceOrb.tsx   # Breathing ember orb (avatar states)
 │   │   ├── pages/             # Route-level pages
 │   │   │   ├── LoginPage.tsx
@@ -83,16 +86,17 @@ ai-bestie/
 │   │   ├── middleware/
 │   │   │   └── auth.ts       # requireAuth, optionalAuth, rate limiters
 │   │   ├── models/
-│   │   │   ├── User.ts        # Email/password + bcrypt pre-save
+│   │   │   ├── User.ts        # Password/Google identities + bcrypt pre-save
 │   │   │   ├── Persona.ts     # Archetype + traits + getSystemPrompt()
-│   │   │   └── Conversation.ts # Messages array + TTL + helpers
+│   │   │   └── Conversation.ts # Messages array + soft-delete + helpers
 │   │   ├── routes/
-│   │   │   ├── auth.ts        # Register/login/logout/me
+│   │   │   ├── auth.ts        # Register/login/Google/logout/me
 │   │   │   ├── avatars.ts     # List + filter avatars
 │   │   │   ├── personas.ts    # CRUD + archetypes endpoint
 │   │   │   └── conversations.ts # CRUD + SSE streaming
 │   │   ├── services/
 │   │   │   ├── chatService.ts # Stream orchestration
+│   │   │   ├── googleAuthService.ts # Verified ID-token identity resolution
 │   │   │   ├── llmService.ts  # Gemini (primary) + OpenRouter (fallback) streaming
 │   │   │   └── personaService.ts # Prompt assembly + archetype helpers
 │   │   ├── validations/
@@ -142,10 +146,15 @@ npm install
 ### 2. Environment Setup
 
 ```bash
-cp .env.example server/.env
+# The server reads the repository root .env.
+cp .env.example .env
+
+# Vite reads client-local environment files. Copy the same public Google Web
+# client ID here when Google sign-in is enabled.
+printf 'VITE_GOOGLE_CLIENT_ID=%s\n' '1234567890-example.apps.googleusercontent.com' > client/.env.local
 ```
 
-Edit `server/.env` with your values:
+Edit `.env` with your values:
 
 ```env
 PORT=3001
@@ -153,6 +162,11 @@ NODE_ENV=development
 MONGODB_URI=mongodb://localhost:27017/ai-bestie
 JWT_SECRET=your-secret-key-change-in-production
 CLIENT_URL=http://localhost:5173
+
+# Optional Google sign-in — same public Web OAuth client ID in both places.
+# No Google client secret is used by this SPA flow.
+GOOGLE_CLIENT_ID=1234567890-example.apps.googleusercontent.com
+VITE_GOOGLE_CLIENT_ID=1234567890-example.apps.googleusercontent.com
 
 # LLM — Gemini Flash is the PRIMARY chat model (free tier, get a key at https://aistudio.google.com/apikey)
 GEMINI_API_KEY=your-gemini-api-key
@@ -223,8 +237,15 @@ Navigate to **http://localhost:5173**
 ```
 
 - JWT stored in **HTTP-only cookie** (7-day expiry)
+- Google Identity Services returns an ID token to the SPA; the backend verifies its signature,
+  issuer, expiry, and `GOOGLE_CLIENT_ID` audience before resolving the stable Google `sub`.
+- Password, Google-only, and honestly linked dual-provider accounts all receive the same cookie and
+  canonical public user shape. Google sign-in stays visibly disabled if either deployment surface is
+  unconfigured; password registration/login remains available.
 - `SameSite=Lax` in dev, `Strict` in production
-- Rate-limited: 5 auth attempts per 10 minutes, 10 API requests per 10 seconds
+- Rate-limited: 5 auth attempts per 10 minutes, 10 non-generation API requests per 10 seconds, and
+  the existing 20 chat generations per minute. Loading or switching history does not consume the
+  chat-generation allowance.
 - **Continue as guest** (login page) skips auth entirely — no token or session is created. Guests get a read-only preview (frozen sample transcript + public archetype browsing via `GET /api/personas/archetypes`); every write route still requires the `requireAuth` cookie above, so guest state grants no API access.
 
 See [docs/api-reference.md](docs/api-reference.md) for full endpoint details.
@@ -280,8 +301,9 @@ its extraction worker was never wired up, so retrieval always returned empty.
 ## 🔊 Voice Replies (neural TTS)
 
 Voice replies use **Kokoro** via `sherpa-onnx-node` — a high-quality neural TTS
-that runs **in-process** (no sidecar, no paid API, Apache-2.0). Toggle "voice
-replies" on in the chat header; Sam's spoken replies stream sentence-by-sentence.
+that runs **in-process** (no sidecar, no paid API, Apache-2.0). Toggle the
+explicit **Voice replies · On/Off** switch in the chat sidebar or header; spoken
+replies stream sentence-by-sentence.
 
 The default model is **Kokoro v1.0 multi-lang** (53 speakers). It replaced the
 older English-only `kokoro-en-v0_19`, whose flat, sentence-by-sentence
@@ -357,6 +379,7 @@ See [docs/persona-system.md](docs/persona-system.md) for the full 5-layer prompt
 | `npm run lint` | Lint both workspaces |
 | `npm run test` | Run tests in both workspaces |
 | `npm run seed` | Seed database with test data |
+| `npm run migrate:auth -w server` | Idempotently backfill auth providers and create the Google subject index |
 | `npm run download-tts-model -w server` | Download the Kokoro TTS model (~360 MB, one-time, gitignored) |
 
 ## 📋 Environment Variables
@@ -368,6 +391,8 @@ See [docs/persona-system.md](docs/persona-system.md) for the full 5-layer prompt
 | `MONGODB_URI` | Yes | MongoDB connection string |
 | `JWT_SECRET` | Yes | Secret for signing JWT tokens |
 | `JWT_EXPIRES_IN` | No | Token expiry (default: 7d) |
+| `GOOGLE_CLIENT_ID` | No | Public Google Web OAuth client ID used by the server as the ID-token audience. Must match the client value. |
+| `VITE_GOOGLE_CLIENT_ID` | No | The same public Web OAuth client ID, embedded into the Vite build for the GIS button. Not a secret. |
 | `GEMINI_API_KEY` | Yes* | Gemini key — primary chat provider |
 | `GEMINI_MODEL` | No | Gemini model id (default: `gemini-flash-latest`; `gemini-2.5-flash` is deprecated for new keys) |
 | `GEMINI_FALLBACK_MODELS` | No | Gemini models tried if the primary 429s (default: `gemini-2.0-flash,gemini-3.5-flash`) |

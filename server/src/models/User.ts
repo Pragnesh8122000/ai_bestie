@@ -1,11 +1,14 @@
 import mongoose, { Document, Schema } from 'mongoose';
 import bcrypt from 'bcryptjs';
 
+export type AuthProvider = 'password' | 'google';
+
 export interface IUser extends Document {
   email: string;
-  password: string;
+  password?: string;
   name: string;
-  authProvider: 'email' | 'google';
+  authProviders: AuthProvider[];
+  googleSubject?: string;
   activePersonaId?: mongoose.Types.ObjectId;
   preferences: {
     theme: 'light' | 'dark' | 'system';
@@ -27,7 +30,7 @@ const userSchema = new Schema<IUser>(
     },
     password: {
       type: String,
-      required: true,
+      select: false,
       minlength: 8,
     },
     name: {
@@ -35,10 +38,17 @@ const userSchema = new Schema<IUser>(
       required: true,
       trim: true,
     },
-    authProvider: {
+    authProviders: {
+      type: [{ type: String, enum: ['password', 'google'] }],
+      default: ['password'],
+      validate: {
+        validator: (providers: AuthProvider[]) => providers.length > 0,
+        message: 'At least one authentication provider is required',
+      },
+    },
+    googleSubject: {
       type: String,
-      enum: ['email', 'google'],
-      default: 'email',
+      trim: true,
     },
     activePersonaId: {
       type: Schema.Types.ObjectId,
@@ -63,9 +73,31 @@ const userSchema = new Schema<IUser>(
   { timestamps: true },
 );
 
+// A Google subject (`sub`) is stable and never reused, unlike an email
+// address. The partial index lets password-only users omit the field while
+// guaranteeing that one Google identity can never be attached twice.
+userSchema.index(
+  { googleSubject: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { googleSubject: { $type: 'string' } },
+  },
+);
+
+userSchema.pre('validate', function (next) {
+  const providers = this.authProviders || [];
+  if (this.isNew && providers.includes('password') && !this.password) {
+    this.invalidate('password', 'Password is required for password authentication');
+  }
+  if (this.isNew && providers.includes('google') && !this.googleSubject) {
+    this.invalidate('googleSubject', 'Google subject is required for Google authentication');
+  }
+  next();
+});
+
 // Pre-save hook for password hashing
 userSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) return next();
+  if (!this.password || !this.isModified('password')) return next();
   const salt = await bcrypt.genSalt(12);
   this.password = await bcrypt.hash(this.password, salt);
   next();
@@ -73,6 +105,7 @@ userSchema.pre('save', async function (next) {
 
 // Method to compare password
 userSchema.methods.comparePassword = async function (candidatePassword: string): Promise<boolean> {
+  if (!this.password || !this.authProviders.includes('password')) return false;
   return bcrypt.compare(candidatePassword, this.password);
 };
 

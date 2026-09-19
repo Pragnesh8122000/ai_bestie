@@ -31,13 +31,15 @@ app.use(
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        connectSrc: ["'self'"],
+        connectSrc: ["'self'", 'https://accounts.google.com/gsi/'],
+        frameSrc: ["'self'", 'https://accounts.google.com/gsi/'],
         imgSrc: ["'self'", 'data:', 'blob:'],
         mediaSrc: ["'self'", 'blob:'],
-        scriptSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'", 'https://accounts.google.com/gsi/client'],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://accounts.google.com/gsi/style'],
       },
     },
+    crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
     crossOriginEmbedderPolicy: false,
   }),
 );
@@ -65,9 +67,8 @@ app.get('/api/health', (_req, res) => {
 // ceiling. Only ttsRateLimiter (mounted inside the router) applies.
 app.use('/api/tts', ttsRoutes);
 
-// Global rate limiter for all /api routes. Keyed on userId when authenticated
-// (falls back to IP). Protects the LLM streaming endpoint and every other
-// non-auth route from quota abuse.
+// Generic limiter for /api routes. Generation is explicitly skipped and has
+// one authoritative per-user limiter inside the conversation router.
 app.use('/api', apiRateLimiter);
 
 // API routes

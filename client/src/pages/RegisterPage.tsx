@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuthStore } from '../stores/authStore';
 import VoiceOrb from '../components/VoiceOrb';
+import GoogleSignInButton from '../components/GoogleSignInButton';
 
 export default function RegisterPage() {
   const [name, setName] = useState('');
@@ -57,6 +58,16 @@ export default function RegisterPage() {
             {error}
           </motion.div>
         )}
+
+        <GoogleSignInButton text="signup_with" onSuccess={() => navigate('/')} />
+
+        <div className="my-7 flex items-center gap-4" aria-hidden="true">
+          <span className="h-px flex-1 bg-line/70" />
+          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-linen-dim/60">
+            or use email
+          </span>
+          <span className="h-px flex-1 bg-line/70" />
+        </div>
 
         <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 }} className="mb-5">
           <label htmlFor="name" className="mb-3 block font-sans text-[15px] font-medium text-linen">

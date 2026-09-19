@@ -7,6 +7,7 @@ import ChatWindow from '../components/ChatWindow';
 import ChatInput from '../components/ChatInput';
 import ConversationList from '../components/ConversationList';
 import VoiceOrb from '../components/VoiceOrb';
+import VoiceModeControl from '../components/VoiceModeControl';
 
 const DESKTOP_QUERY = '(min-width: 640px)';
 
@@ -18,8 +19,6 @@ export default function ChatPage() {
   const activeConversationId = useChatStore((s) => s.activeConversationId);
   const isLoadingConversation = useChatStore((s) => s.isLoadingConversation);
   const activeTitle = useChatStore((s) => s.activeConversation?.title);
-  const ttsEnabled = useChatStore((s) => s.ttsEnabled);
-  const toggleTts = useChatStore((s) => s.toggleTts);
   const isSidebarOpen = useChatStore((s) => s.isSidebarOpen);
   const setSidebarOpen = useChatStore((s) => s.setSidebarOpen);
   const error = useChatStore((s) => s.error);
@@ -115,18 +114,7 @@ export default function ChatPage() {
             New companion
           </button>
 
-          <div className="flex items-center justify-between rounded-2xl border border-line/60 bg-clay/20 px-4 py-3">
-            <div className="flex items-center gap-2.5">
-              <WaveIcon active={ttsEnabled} />
-              <div>
-                <p className="font-sans text-sm text-linen">Voice mode</p>
-                <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-linen-dim">
-                  {ttsEnabled ? 'On' : 'Off'}
-                </p>
-              </div>
-            </div>
-            <Switch checked={ttsEnabled} onChange={toggleTts} label="Toggle voice mode" />
-          </div>
+          <VoiceModeControl />
 
           <div className="flex items-center gap-3 rounded-2xl border border-line/60 px-3 py-2.5">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-ember to-ember-dim font-sans text-sm font-semibold text-ink">
@@ -183,7 +171,7 @@ export default function ChatPage() {
 
               <ConversationList />
 
-              <div className="px-4 pb-2">
+              <div className="space-y-3 px-4 pb-3">
                 <button
                   type="button"
                   onClick={() => {
@@ -195,6 +183,7 @@ export default function ChatPage() {
                   <PeopleIcon />
                   New companion
                 </button>
+                <VoiceModeControl />
               </div>
 
               <div className="flex items-center gap-3 border-t border-line/60 px-4 py-3">
@@ -231,36 +220,24 @@ export default function ChatPage() {
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            onClick={toggleTts}
-            aria-pressed={ttsEnabled}
-            className={`flex min-h-10 items-center gap-2 rounded-full border px-4 font-mono text-[11px] uppercase tracking-[0.18em] transition-all duration-150 active:scale-95 ${
-              ttsEnabled
-                ? 'border-ember/50 bg-ember/10 text-ember'
-                : 'border-line text-linen-dim hover:text-linen'
-            }`}
-          >
-            <WaveIcon active={ttsEnabled} small />
-            Voice
-          </button>
+            <VoiceModeControl compact />
 
-          <button
-            type="button"
-            onClick={() => navigate('/create-persona')}
-            title="New companion"
-            aria-label="New companion"
-            className="flex h-10 w-10 items-center justify-center rounded-full border border-line text-linen-dim transition-colors duration-150 hover:border-ember hover:text-ember"
-          >
-            <PeopleIcon />
-          </button>
+            <button
+              type="button"
+              onClick={() => navigate('/create-persona')}
+              title="New companion"
+              aria-label="New companion"
+              className="flex h-10 w-10 items-center justify-center rounded-full border border-line text-linen-dim transition-colors duration-150 hover:border-ember hover:text-ember"
+            >
+              <PeopleIcon />
+            </button>
 
-          <button
-            onClick={handleLogout}
-            className="flex min-h-10 items-center rounded-full border border-line px-4 font-mono text-[11px] uppercase tracking-[0.18em] text-linen-dim transition-all duration-150 hover:border-ember hover:text-ember active:scale-95"
-          >
-            Sign out
-          </button>
+            <button
+              onClick={handleLogout}
+              className="flex min-h-10 items-center rounded-full border border-line px-4 font-mono text-[11px] uppercase tracking-[0.18em] text-linen-dim transition-all duration-150 hover:border-ember hover:text-ember active:scale-95"
+            >
+              Sign out
+            </button>
           </div>
         </header>
 
@@ -299,27 +276,6 @@ export default function ChatPage() {
   );
 }
 
-function Switch({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={onChange}
-      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-150 ${
-        checked ? 'bg-ember' : 'bg-clay-2'
-      }`}
-    >
-      <span
-        className={`absolute top-0.5 h-5 w-5 rounded-full bg-linen transition-transform duration-150 ${
-          checked ? 'translate-x-5' : 'translate-x-0.5'
-        }`}
-      />
-    </button>
-  );
-}
-
 function PeopleIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -327,18 +283,6 @@ function PeopleIcon() {
       <circle cx="9" cy="7" r="4" />
       <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
       <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-    </svg>
-  );
-}
-
-function WaveIcon({ active, small }: { active: boolean; small?: boolean }) {
-  const s = small ? 14 : 16;
-  return (
-    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true" className={active ? 'text-ember' : ''}>
-      <line x1="4" y1="9" x2="4" y2="15" />
-      <line x1="9" y1="6" x2="9" y2="18" />
-      <line x1="14" y1="3" x2="14" y2="21" />
-      <line x1="19" y1="7" x2="19" y2="17" />
     </svg>
   );
 }

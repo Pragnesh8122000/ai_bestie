@@ -11,7 +11,8 @@ Production:   https://api.aibestie.com/api
 
 ## Authentication
 
-All endpoints except `/auth/register` and `/auth/login` require a valid JWT cookie.
+All endpoints except `/auth/register`, `/auth/login`, `/auth/google`, and the
+documented public catalog endpoints require a valid JWT cookie.
 
 ```
 Cookie: token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
@@ -24,7 +25,12 @@ Cookie: token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 **Rate limits:**
 - Auth routes: 5 requests per 10 minutes per IP
-- API routes: 10 requests per 10 seconds per user
+- Non-generation API routes: 10 requests per 10 seconds per authenticated user, or per IP when unauthenticated
+- Chat generation: 20 requests per minute per authenticated user
+
+Conversation list/history requests never spend a chat-generation allowance.
+The stream endpoint is excluded from the generic API bucket and enforced once
+by the chat limiter.
 
 ---
 
@@ -51,7 +57,8 @@ Create a new account.
     "user": {
       "id": "64f1a2b3c4d5e6f7a8b9c0d1",
       "name": "Jane Doe",
-      "email": "jane@example.com"
+      "email": "jane@example.com",
+      "authProviders": ["password"]
     }
   }
 }
@@ -101,7 +108,8 @@ Authenticate an existing user.
     "user": {
       "id": "64f1a2b3c4d5e6f7a8b9c0d1",
       "name": "Jane Doe",
-      "email": "jane@example.com"
+      "email": "jane@example.com",
+      "authProviders": ["password"]
     }
   }
 }
@@ -113,6 +121,50 @@ Authenticate an existing user.
 ```
 
 Sets `token` HTTP-only cookie on success.
+
+---
+
+### POST /api/auth/google
+
+Verify a Google Identity Services ID token and create, resolve, or safely link
+the local user. The server validates the token against `GOOGLE_CLIENT_ID`; it
+never accepts client-decoded claims.
+
+**Request:**
+```json
+{ "credential": "eyJhbGciOiJSUzI1NiIs..." }
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "64f1a2b3c4d5e6f7a8b9c0d1",
+      "name": "Jane Doe",
+      "email": "jane@gmail.com",
+      "authProviders": ["google"]
+    }
+  }
+}
+```
+
+The same verified Gmail or Workspace email may safely link an existing password
+account, returning `authProviders: ["password", "google"]`. A third-party email
+collision is not auto-linked because Google may not be authoritative for its
+current ownership; the endpoint returns `409 ACCOUNT_LINK_REQUIRED` and the
+existing password account remains unchanged.
+
+| Status | Code | Meaning |
+|--------|------|---------|
+| 401 | `INVALID_GOOGLE_CREDENTIAL` | Token verification failed |
+| 401 | `UNVERIFIED_GOOGLE_EMAIL` | Token lacks a verified email or stable subject |
+| 409 | `ACCOUNT_LINK_REQUIRED` | Existing third-party email must use password login |
+| 409 | `GOOGLE_IDENTITY_CONFLICT` | Subject/email is already linked incompatibly |
+| 503 | `GOOGLE_AUTH_UNAVAILABLE` | Server client ID is not configured |
+
+Sets the same `token` HTTP-only cookie as password login.
 
 ---
 
@@ -140,6 +192,7 @@ Get the currently authenticated user.
       "id": "64f1a2b3c4d5e6f7a8b9c0d1",
       "name": "Jane Doe",
       "email": "jane@example.com",
+      "authProviders": ["password", "google"],
       "activePersonaId": "64f2a3b4c5d6e7f8a9b0c1d2"
     }
   }

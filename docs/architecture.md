@@ -22,8 +22,8 @@
 │                    EXPRESS 5 SERVER                          │
 │                          │                                  │
 │  ┌───────────┐  ┌───────┴────────┐  ┌───────────────────┐ │
-│  │  Passport  │  │   Middleware    │  │   Rate Limiters   │ │
-│  │  + JWT     │  │  (Auth, CORS,   │  │  (5/10min auth,   │ │
+│  │ Passport + │  │   Middleware    │  │   Rate Limiters   │ │
+│  │ Google+JWT │  │  (Auth, CORS,   │  │  (5/10min auth,   │ │
 │  │  Cookies   │  │   Helmet)      │  │  10/10s API,       │ │
 │  └─────┬─────┘  └────────────────┘  │  20/min chat)     │ │
 │        │                                └───────────────────┘ │
@@ -49,7 +49,7 @@
     │  - Users  │            │  OpenRouter           │
     │  - Personas│           │  (free models,        │
     │  - Convos  │            │   fallback)           │
-    │  (TTL 48h)│            └──────────────────────┘
+    │ (permanent)│            └──────────────────────┘
     └───────────┘
 ```
 
@@ -109,15 +109,22 @@ sent to the LLM as the `messages` array.
    → Generate JWT → Set HTTP-only cookie
    → Return user
 
-3. GET /api/auth/me
+3. POST /api/auth/google
+   → Browser submits a Google Identity Services ID token
+   → Server verifies signature, issuer, expiry, and configured audience
+   → Require verified email; resolve identity by stable Google `sub`
+   → Create Google-only user or apply the deterministic safe-link policy
+   → Generate the same JWT cookie → Return the same canonical user shape
+
+4. GET /api/auth/me
    → requireAuth middleware extracts userId from JWT
    → Return fresh user document
 
-4. POST /api/auth/logout
+5. POST /api/auth/logout
    → clearTokenCookie() removes JWT
    → Return success
 
-5. Every protected route:
+6. Every protected route:
    → Cookie: token=eyJhbGci...
    → requireAuth → jwt.verify() → req.userId = decoded.id
 ```
@@ -151,7 +158,7 @@ llmService.ts
 ```
 authStore.ts (Zustand)
 ├── state: user, isAuthenticated, isLoading, error
-├── actions: initialize, register, login, logout, clearError
+├── actions: initialize, register, login, googleLogin, logout, clearError
 └── listens: window 'auth:unauthorized' event → auto-logout
 
 personaStore.ts (Zustand)
@@ -162,7 +169,7 @@ personaStore.ts (Zustand)
 chatStore.ts (Zustand)
 ├── state: conversations[], activeConversation, avatarState, isStreaming, streamingContent
 ├── actions: fetchConversations, openDefaultConversation, switchConversation, createConversation, deleteConversation, sendMessage
-└── manages: SSE ReadableStream parsing, avatar state machine
+└── manages: per-load/per-stream generations, single-flight sends, SSE parsing, avatar state machine
 ```
 
 ### Data Flow Between Stores
@@ -204,7 +211,7 @@ Request
   ├─ cookieParser()        → Parse cookies
   ├─ passport.initialize()  → Passport setup
   │
-  ├─ /api/*                → apiRateLimiter (10 req / 10 sec, keyed on userId/IP)
+  ├─ /api/*                → apiRateLimiter (10 non-stream req / 10 sec, keyed on userId/IP)
   ├─ /api/auth/*           → authRateLimiter (5 req / 10 min)
   ├─ stream endpoint       → chatRateLimiter (20 msg / min per user)
   │
@@ -231,10 +238,11 @@ The global error handler (`errors.ts`) normalizes all errors:
 
 1. **Helmet** — Sets security headers (CSP, XSS protection, etc.)
 2. **CORS** — Whitelists `CLIENT_URL`, allows credentials
-3. **Rate Limiting** — Per-IP for auth, per-user for API
+3. **Rate Limiting** — Per-IP for auth, per-user (falling back to IP) for non-generation API and chat generation
 4. **JWT HTTP-only Cookies** — Not accessible via JavaScript (XSS protection)
 5. **SameSite=Lax/Strict** — CSRF protection
 6. **bcrypt (12 rounds)** — Password hashing
 7. **Zod Validation** — Input sanitization on all API boundaries
 8. **Mongoose Validation** — Schema-level constraints
 9. **User Isolation** — All queries filter by `req.userId`
+10. **Google Token Verification** — Server validates ID-token signature and Web-client audience; stable `sub` is partial-unique
