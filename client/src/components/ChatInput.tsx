@@ -2,7 +2,7 @@ import { useState, FormEvent, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useChatStore } from '../stores/chatStore';
 import { usePersonaStore } from '../stores/personaStore';
-import { listenOnce, isSTTSupported, stopSpeaking } from '../utils/speech';
+import { listenOnce, isSTTSupported, stopSpeaking, type ListenSession } from '../utils/speech';
 
 export default function ChatInput() {
   const [message, setMessage] = useState('');
@@ -17,6 +17,10 @@ export default function ChatInput() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const sttSupported = isSTTSupported();
   const bestieName = personas.find((p) => p.id === activeConversation?.personaId)?.name || 'your bestie';
+  // Tracks the in-flight recognition session so it can be stopped (not just
+  // left running) if the component unmounts mid-listen — otherwise the mic
+  // stays open with no one left to consume its result.
+  const sessionRef = useRef<ListenSession | null>(null);
 
   useEffect(() => {
     if (inputRef.current) {
@@ -24,6 +28,12 @@ export default function ChatInput() {
       inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 120)}px`;
     }
   }, [message]);
+
+  useEffect(() => {
+    return () => {
+      sessionRef.current?.stop();
+    };
+  }, []);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -48,8 +58,10 @@ export default function ChatInput() {
     setInterim('');
     setMicError(null);
     setIsRecording(true);
+    const session = listenOnce('en-US', (text) => setInterim(text));
+    sessionRef.current = session;
     try {
-      const transcript = await listenOnce('en-US', (text) => setInterim(text));
+      const transcript = await session.promise;
       if (transcript) {
         setMessage((prev) => (prev ? `${prev} ${transcript}` : transcript));
         inputRef.current?.focus();
@@ -67,12 +79,17 @@ export default function ChatInput() {
         );
       } else if (code === 'not-allowed' || code === 'service-not-allowed') {
         setMicError('Mic access is blocked. Allow microphone access for this site and try again.');
+      } else if (code === 'audio-capture') {
+        setMicError('No microphone found. Connect one and try again.');
       } else if (code === 'no-speech') {
         setMicError('Didn\u2019t catch that \u2014 try again.');
-      } else {
+      } else if (code !== 'aborted') {
+        // 'aborted' is a deliberate stop (e.g. unmount), not a failure worth
+        // surfacing to the user.
         setMicError('Voice typing failed. Try again or type instead.');
       }
     } finally {
+      sessionRef.current = null;
       setInterim('');
       setIsRecording(false);
     }
@@ -147,7 +164,11 @@ export default function ChatInput() {
         </p>
       )}
       {sttSupported && micError && (
-        <p className="mx-auto mt-2 max-w-2xl px-1 text-center font-sans text-xs text-ember-soft">
+        <p
+          role="alert"
+          aria-live="assertive"
+          className="mx-auto mt-2 max-w-2xl px-1 text-center font-sans text-xs text-ember-soft"
+        >
           {micError}
         </p>
       )}
