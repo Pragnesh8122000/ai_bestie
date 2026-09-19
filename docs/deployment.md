@@ -335,12 +335,12 @@ res.cookie('token', jwt, {
 // Auth routes: 5 requests per 10 minutes per IP
 authRateLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 5 });
 
-// Non-generation API routes: 10 requests per 10 seconds per IP.
+// Non-generation API routes: 10 requests per 10 seconds, keyed on userId/IP.
 // The message stream path is skipped here.
-apiRateLimiter = rateLimit({ windowMs: 10 * 1000, max: 10, skip: isMessageStream });
+apiRateLimiter = rateLimit({ windowMs: 10 * 1000, max: 10, keyGenerator: requestKey, skip: isMessageStream });
 
-// The one authoritative generation limit: 20 messages per minute per user.
-chatRateLimiter = rateLimit({ windowMs: 60 * 1000, max: 20, keyGenerator: req => req.userId });
+// The one authoritative generation limit: 20 messages per minute, keyed on userId/IP.
+chatRateLimiter = rateLimit({ windowMs: 60 * 1000, max: 20, keyGenerator: requestKey });
 ```
 
 Loading, listing, or switching conversation history cannot spend a generation

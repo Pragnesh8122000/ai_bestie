@@ -88,7 +88,7 @@ ai-bestie/
 │   │   ├── models/
 │   │   │   ├── User.ts        # Password/Google identities + bcrypt pre-save
 │   │   │   ├── Persona.ts     # Archetype + traits + getSystemPrompt()
-│   │   │   └── Conversation.ts # Messages array + TTL + helpers
+│   │   │   └── Conversation.ts # Messages array + soft-delete + helpers
 │   │   ├── routes/
 │   │   │   ├── auth.ts        # Register/login/Google/logout/me
 │   │   │   ├── avatars.ts     # List + filter avatars

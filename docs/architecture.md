@@ -49,7 +49,7 @@
     │  - Users  │            │  OpenRouter           │
     │  - Personas│           │  (free models,        │
     │  - Convos  │            │   fallback)           │
-    │  (TTL 48h)│            └──────────────────────┘
+    │ (permanent)│            └──────────────────────┘
     └───────────┘
 ```
 
@@ -211,7 +211,7 @@ Request
   ├─ cookieParser()        → Parse cookies
   ├─ passport.initialize()  → Passport setup
   │
-  ├─ /api/*                → apiRateLimiter (10 non-stream req / 10 sec per IP)
+  ├─ /api/*                → apiRateLimiter (10 non-stream req / 10 sec, keyed on userId/IP)
   ├─ /api/auth/*           → authRateLimiter (5 req / 10 min)
   ├─ stream endpoint       → chatRateLimiter (20 msg / min per user)
   │
@@ -238,7 +238,7 @@ The global error handler (`errors.ts`) normalizes all errors:
 
 1. **Helmet** — Sets security headers (CSP, XSS protection, etc.)
 2. **CORS** — Whitelists `CLIENT_URL`, allows credentials
-3. **Rate Limiting** — Per-IP for auth/non-generation API, per-user for chat generation
+3. **Rate Limiting** — Per-IP for auth, per-user (falling back to IP) for non-generation API and chat generation
 4. **JWT HTTP-only Cookies** — Not accessible via JavaScript (XSS protection)
 5. **SameSite=Lax/Strict** — CSRF protection
 6. **bcrypt (12 rounds)** — Password hashing

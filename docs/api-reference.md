@@ -25,7 +25,7 @@ Cookie: token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 **Rate limits:**
 - Auth routes: 5 requests per 10 minutes per IP
-- Non-generation API routes: 10 requests per 10 seconds per IP
+- Non-generation API routes: 10 requests per 10 seconds per authenticated user, or per IP when unauthenticated
 - Chat generation: 20 requests per minute per authenticated user
 
 Conversation list/history requests never spend a chat-generation allowance.
