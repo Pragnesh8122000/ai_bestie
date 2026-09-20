@@ -263,3 +263,73 @@ describe('sendMessage', () => {
     expect(api.streamMessage).not.toHaveBeenCalled();
   });
 });
+
+describe('sendMessage voice replies', () => {
+  it('speaks after the first sentence instead of waiting for the reply to finish, when voice replies are on', async () => {
+    useChatStore.setState({
+      conversations: [conversation('a')],
+      activeConversation: { ...conversation('a'), messages: [] },
+      activeConversationId: 'a',
+      ttsEnabled: true,
+    });
+    api.streamMessage.mockResolvedValue(
+      sseResponse([
+        { type: 'token', content: 'One thing. ' },
+        // Only one sentence has landed so far — the reply is still streaming.
+        { type: 'token', content: 'Two more words' },
+        { type: 'done', messageId: 'm1' },
+      ]),
+    );
+
+    const { speakChunk } = await import('../utils/speech');
+    await useChatStore.getState().sendMessage('Hello Sam');
+
+    // The first sentence must have gone out on its own call, before the
+    // reply finished streaming — not batched with the rest at the end.
+    expect(speakChunk).toHaveBeenCalledWith('One thing.');
+    const firstCallIndex = (speakChunk as ReturnType<typeof vi.fn>).mock.calls.findIndex(
+      (call) => call[0] === 'One thing.',
+    );
+    expect(firstCallIndex).toBe(0);
+  });
+
+  it('reliably speaks a short, single-sentence reply once it completes', async () => {
+    useChatStore.setState({
+      conversations: [conversation('a')],
+      activeConversation: { ...conversation('a'), messages: [] },
+      activeConversationId: 'a',
+      ttsEnabled: true,
+    });
+    api.streamMessage.mockResolvedValue(
+      sseResponse([
+        { type: 'token', content: 'Hey there!' },
+        { type: 'done', messageId: 'm1' },
+      ]),
+    );
+
+    const { speakChunk } = await import('../utils/speech');
+    await useChatStore.getState().sendMessage('Hi');
+
+    expect(speakChunk).toHaveBeenCalledWith('Hey there!');
+  });
+
+  it('never calls speakChunk when voice replies are off', async () => {
+    useChatStore.setState({
+      conversations: [conversation('a')],
+      activeConversation: { ...conversation('a'), messages: [] },
+      activeConversationId: 'a',
+      ttsEnabled: false,
+    });
+    api.streamMessage.mockResolvedValue(
+      sseResponse([
+        { type: 'token', content: 'One thing. Two things.' },
+        { type: 'done', messageId: 'm1' },
+      ]),
+    );
+
+    const { speakChunk } = await import('../utils/speech');
+    await useChatStore.getState().sendMessage('Hello Sam');
+
+    expect(speakChunk).not.toHaveBeenCalled();
+  });
+});

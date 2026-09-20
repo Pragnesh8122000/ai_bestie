@@ -62,7 +62,7 @@ export default function ChatWindow() {
   const showEmpty = messages.length === 0 && !isStreaming;
 
   return (
-    <div className="flex flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       {/* Call stage — larger orb, more presence */}
       <div className="flex flex-col items-center gap-3 px-4 pt-6 pb-4 sm:pt-10 sm:pb-6">
         <VoiceOrb state={avatarState} size={220} showGlow />
@@ -81,8 +81,10 @@ export default function ChatWindow() {
         </div>
       </div>
 
-      {/* Transcript */}
-      <div className="flex-1 overflow-y-auto px-4 sm:px-8">
+      {/* Transcript — min-h-0 is load-bearing: without it this flex child
+          refuses to shrink below its content height, so overflow-y-auto
+          never kicks in and older messages become unreachable. */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 sm:px-8">
         {showEmpty && (
           <div className="flex h-full min-h-[200px] flex-col items-center justify-center gap-6">
             <p className="max-w-sm text-center font-display text-lg italic text-linen-dim">

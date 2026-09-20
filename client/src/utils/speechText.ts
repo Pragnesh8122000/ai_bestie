@@ -104,7 +104,7 @@ export function stripForSpeech(md: string): string {
 }
 
 /** Hold at least this many completed sentences before speaking (prosody). */
-const SENTENCES_PER_CHUNK = 2;
+export const SENTENCES_PER_CHUNK = 2;
 /** Speak sooner than a sentence boundary once the buffer gets this long. */
 const MAX_CHUNK_CHARS = 280;
 
@@ -122,8 +122,18 @@ const SENTENCE_END = /[.!?…]/;
  * a link would hand the stripper a fragment it cannot interpret.
  *
  * @param flush end of stream: emit whatever is left, including a partial unit.
+ * @param minUtterances utterances required before speaking (default
+ *   `SENTENCES_PER_CHUNK`). The caller passes 1 for the first chunk of a
+ *   reply so playback starts on the first sentence instead of waiting for a
+ *   second one — replies are commonly one or two sentences long, and holding
+ *   out for two meant audio routinely didn't start until the text had
+ *   already finished streaming in.
  */
-export function takeSpeech(raw: string, flush = false): { speech: string; rest: string } {
+export function takeSpeech(
+  raw: string,
+  flush = false,
+  minUtterances: number = SENTENCES_PER_CHUNK,
+): { speech: string; rest: string } {
   if (!raw) return { speech: '', rest: '' };
 
   let rest = raw;
@@ -152,7 +162,7 @@ export function takeSpeech(raw: string, flush = false): { speech: string; rest: 
     const lineUnits = units.filter((u) => u.endsWith('\n') && u.trim()).length;
     const utterances = Math.max(terminators, lineUnits);
 
-    if (utterances >= SENTENCES_PER_CHUNK || speech.length >= MAX_CHUNK_CHARS) {
+    if (utterances >= minUtterances || speech.length >= MAX_CHUNK_CHARS) {
       return { speech, rest };
     }
   }

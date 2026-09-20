@@ -15,13 +15,14 @@ vi.mock('../api/avatar', () => ({
 }));
 
 vi.mock('../api/persona', () => ({
-  personaApi: { getArchetypes: vi.fn() },
+  personaApi: { getArchetypes: vi.fn(), list: vi.fn() },
 }));
 
 import CreatePersonaPage from './CreatePersonaPage';
 import { avatarApi } from '../api/avatar';
 import { personaApi } from '../api/persona';
 import { usePersonaStore } from '../stores/personaStore';
+import { useChatStore } from '../stores/chatStore';
 
 const api = avatarApi as unknown as Record<string, ReturnType<typeof vi.fn>>;
 const personaApiMock = personaApi as unknown as Record<string, ReturnType<typeof vi.fn>>;
@@ -43,6 +44,7 @@ beforeEach(() => {
   navigateMock.mockClear();
   api.list.mockResolvedValue({ data: { data: { avatars } } });
   personaApiMock.getArchetypes.mockResolvedValue({ data: { data: { archetypes } } });
+  personaApiMock.list.mockResolvedValue({ data: { data: { personas: [] } } });
   usePersonaStore.setState({ personas: [], activePersonaId: null, error: null, archetypes: [] });
 });
 
@@ -131,5 +133,34 @@ describe('CreatePersonaPage', () => {
         avatarId: 'mentor-male-01',
       }),
     );
+  });
+
+  it('selecting an avatar already tied to a persona starts a chat directly, without creating anything', async () => {
+    const createPersona = vi.fn().mockResolvedValue({ id: 'new' });
+    const startNewConversation = vi.fn().mockResolvedValue('conv1');
+    const existingPersona = {
+      id: 'p-existing',
+      name: 'Jake',
+      archetype: 'friend' as const,
+      avatarId: 'friend-male-01',
+      traits: { directness: 0, warmth: 0, proactivity: 0, depth: 0, accountability: 0 },
+    };
+    personaApiMock.list.mockResolvedValue({ data: { data: { personas: [existingPersona] } } });
+    usePersonaStore.setState({ createPersona: createPersona as any });
+    useChatStore.setState({ startNewConversation: startNewConversation as any });
+
+    const user = userEvent.setup();
+    render(<CreatePersonaPage />);
+
+    await screen.findByRole('radio', { name: 'Jake' });
+    await waitFor(() => expect(usePersonaStore.getState().personas).toHaveLength(1));
+
+    await user.click(screen.getByRole('radio', { name: 'Jake' }));
+
+    await waitFor(() => expect(startNewConversation).toHaveBeenCalled());
+    expect(createPersona).not.toHaveBeenCalled();
+    expect(screen.queryByText('Creating')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Create' })).not.toBeInTheDocument();
+    expect(navigateMock).toHaveBeenCalledWith('/');
   });
 });

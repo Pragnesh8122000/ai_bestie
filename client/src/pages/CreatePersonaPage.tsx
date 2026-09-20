@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { avatarApi, Avatar } from '../api/avatar';
 import { usePersonaStore } from '../stores/personaStore';
+import { useChatStore } from '../stores/chatStore';
 import { getArchetypeDisplayName } from '../utils/persona';
 
 export default function CreatePersonaPage() {
@@ -10,6 +11,10 @@ export default function CreatePersonaPage() {
   const createPersona = usePersonaStore((s) => s.createPersona);
   const archetypes = usePersonaStore((s) => s.archetypes);
   const fetchArchetypes = usePersonaStore((s) => s.fetchArchetypes);
+  const personas = usePersonaStore((s) => s.personas);
+  const fetchPersonas = usePersonaStore((s) => s.fetchPersonas);
+  const setActivePersona = usePersonaStore((s) => s.setActivePersona);
+  const startNewConversation = useChatStore((s) => s.startNewConversation);
 
   const [avatars, setAvatars] = useState<Avatar[]>([]);
   const [isLoadingAvatars, setIsLoadingAvatars] = useState(true);
@@ -20,6 +25,10 @@ export default function CreatePersonaPage() {
   const [name, setName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  // Distinct from `isCreating`: jumping straight into a chat with a persona
+  // the user already has, no persona-creation call involved.
+  const [isSelectingExisting, setIsSelectingExisting] = useState(false);
+  const [selectError, setSelectError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -42,7 +51,8 @@ export default function CreatePersonaPage() {
 
   useEffect(() => {
     fetchArchetypes();
-  }, [fetchArchetypes]);
+    fetchPersonas();
+  }, [fetchArchetypes, fetchPersonas]);
 
   const getArchetypeLabel = (category: Avatar['category']) =>
     getArchetypeDisplayName(category, archetypes);
@@ -56,7 +66,29 @@ export default function CreatePersonaPage() {
 
   const selectedAvatar = avatars.find((a) => a.id === selectedAvatarId) ?? null;
 
-  const handleSelect = (avatar: Avatar) => {
+  const handleSelect = async (avatar: Avatar) => {
+    // Already have a persona for this avatar — this is a *selection*, not a
+    // creation. Skip the create flow entirely: activate it and drop straight
+    // into a new chat.
+    const existingPersona = personas.find((p) => p.avatarId === avatar.id);
+    if (existingPersona) {
+      if (isSelectingExisting) return;
+      setIsSelectingExisting(true);
+      setSelectError(null);
+      try {
+        setActivePersona(existingPersona.id);
+        const conversationId = await startNewConversation();
+        if (!conversationId) {
+          throw new Error('Failed to start conversation');
+        }
+        navigate('/');
+      } catch {
+        setSelectError('Could not start chat. Please try again.');
+        setIsSelectingExisting(false);
+      }
+      return;
+    }
+
     setSelectedAvatarId(avatar.id);
     setIsDrawerOpen(false);
     setName(avatar.name);
@@ -106,6 +138,12 @@ export default function CreatePersonaPage() {
           </p>
         )}
 
+        {selectError && (
+          <p className="mb-4 rounded-2xl border border-ember/40 bg-ember/10 px-5 py-4 text-center font-sans text-sm text-ember-soft">
+            {selectError}
+          </p>
+        )}
+
         {!isLoadingAvatars && !loadError && (
           <div role="radiogroup" aria-label="Choose an avatar" className="space-y-8">
             {avatarsByCategory.map(({ category, label, avatars: categoryAvatars }) => (
@@ -122,8 +160,9 @@ export default function CreatePersonaPage() {
                         type="button"
                         role="radio"
                         aria-checked={isSelected}
+                        disabled={isSelectingExisting}
                         onClick={() => handleSelect(avatar)}
-                        className={`group flex flex-col items-center gap-2 rounded-3xl border p-3 transition-all duration-150 active:scale-95 ${
+                        className={`group flex flex-col items-center gap-2 rounded-3xl border p-3 transition-all duration-150 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 ${
                           isSelected
                             ? 'border-ember bg-ember/10 shadow-lg shadow-ember/10'
                             : 'border-line/60 hover:border-line hover:bg-clay/20'
