@@ -77,7 +77,10 @@ export default function CreatePersonaPage() {
       setSelectError(null);
       try {
         setActivePersona(existingPersona.id);
-        await startNewConversation();
+        const conversationId = await startNewConversation();
+        if (!conversationId) {
+          throw new Error('Failed to start conversation');
+        }
         navigate('/');
       } catch {
         setSelectError('Could not start chat. Please try again.');
