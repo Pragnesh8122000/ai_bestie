@@ -228,6 +228,20 @@ describe('takeSpeech', () => {
     expect(takeSpeech('')).toEqual({ speech: '', rest: '' });
   });
 
+  it('emits after a single sentence when minUtterances is 1', () => {
+    // chatStore passes 1 for the first chunk of a reply so voice playback
+    // starts promptly instead of waiting for a second sentence that a short
+    // reply may never have.
+    const r = takeSpeech('One thing. And more', false, 1);
+    expect(r.speech).toBe('One thing.');
+    expect(r.rest.trim()).toBe('And more');
+  });
+
+  it('still waits for two sentences by default', () => {
+    const r = takeSpeech('One thing. ');
+    expect(r.speech).toBe('');
+  });
+
   it('never emits a markdown delimiter while draining a stream', () => {
     // Replay a reply token by token the way the SSE loop does.
     const reply =

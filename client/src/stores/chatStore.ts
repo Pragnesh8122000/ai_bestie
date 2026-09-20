@@ -55,6 +55,10 @@ let loadId = 0;
 // Transient, not reactive. `takeSpeech` decides when enough has arrived to
 // speak and strips the syntax before it reaches the voice.
 let ttsSentenceBuffer = '';
+// Whether any audio chunk has been queued yet for the current reply. The
+// first chunk only waits for one complete sentence so playback starts
+// promptly; later chunks batch two for continuous prosody (see takeSpeech).
+let ttsHasSpokenFirstChunk = false;
 
 const WATCHDOG_MS = 60_000; // abort if no chunk arrives for 60s
 
@@ -393,6 +397,7 @@ export const useChatStore = create<ChatState>((set, getState) => ({
 
     // Reset TTS for the new reply.
     ttsSentenceBuffer = '';
+    ttsHasSpokenFirstChunk = false;
     beginSpeech();
 
     const resetWatchdog = () => {
@@ -476,10 +481,15 @@ export const useChatStore = create<ChatState>((set, getState) => ({
                   // boundary instead of resetting prosody every sentence),
                   // keeps constructs like fenced blocks whole, and strips the
                   // Markdown so the voice speaks words rather than asterisks.
-                  const { speech, rest } = takeSpeech(ttsSentenceBuffer);
+                  const { speech, rest } = takeSpeech(
+                    ttsSentenceBuffer,
+                    false,
+                    ttsHasSpokenFirstChunk ? undefined : 1,
+                  );
                   if (speech) {
                     speakChunk(speech);
                     ttsSentenceBuffer = rest;
+                    ttsHasSpokenFirstChunk = true;
                   }
                 }
                 break;

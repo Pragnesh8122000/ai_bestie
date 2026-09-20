@@ -142,3 +142,42 @@ describe('ChatWindow markdown rendering', () => {
     expect(document.body.textContent).not.toContain('```');
   });
 });
+
+describe('ChatWindow scrollable history', () => {
+  // jsdom doesn't lay out flexbox, so this can't assert real scrollHeight —
+  // it guards the CSS contract instead: a flex child with `flex-1` refuses to
+  // shrink below its content's height unless paired with `min-h-0`, which
+  // silently defeats `overflow-y-auto` and traps the view on the newest
+  // messages. Losing either class on either element re-introduces the bug.
+  it('keeps the transcript container able to shrink and scroll independently of its parent', () => {
+    setMessages(
+      Array.from({ length: 30 }, (_, i) => ({
+        role: i % 2 === 0 ? ('user' as const) : ('assistant' as const),
+        content: `message ${i}`,
+      })),
+    );
+    const { container } = render(<ChatWindow />);
+
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.className).toContain('min-h-0');
+    expect(root.className).toContain('flex-1');
+
+    const transcript = screen.getByText('message 0').closest('.overflow-y-auto') as HTMLElement;
+    expect(transcript).not.toBeNull();
+    expect(transcript.className).toContain('min-h-0');
+    expect(transcript.className).toContain('flex-1');
+  });
+
+  it('keeps every earlier message mounted (not clipped away) once the conversation scrolls', () => {
+    setMessages(
+      Array.from({ length: 30 }, (_, i) => ({
+        role: 'user' as const,
+        content: `message ${i}`,
+      })),
+    );
+    render(<ChatWindow />);
+
+    expect(screen.getByText('message 0')).toBeInTheDocument();
+    expect(screen.getByText('message 29')).toBeInTheDocument();
+  });
+});
