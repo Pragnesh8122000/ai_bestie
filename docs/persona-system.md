@@ -186,7 +186,10 @@ default "Friend" persona named **Sam** so the app can open straight into a
 chat. From there, `CreatePersonaPage` lets a user pick any of the 4
 archetypes (grouped by category in the avatar grid) to create additional
 personas — the archetype/trait machinery above is exercised end-to-end, not
-just reserved for later.
+just reserved for later. Picking an avatar that already has a persona is a
+*selection*, not a creation: it skips the create-persona drawer entirely,
+activates that persona, and starts a new conversation directly
+(`CreatePersonaPage.tsx`'s `handleSelect`).
 
 Every persona's archetype is surfaced wherever the persona itself is shown:
 as a label on each avatar in the create-persona picker, and in the chat
