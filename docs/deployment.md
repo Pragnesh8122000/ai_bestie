@@ -36,25 +36,31 @@
 └──────────┘ └────────────────────────┘
 ```
 
-This is a free-tier deployment: no Redis, no background workers, no paid LLM
-APIs, no vector search. The backend is a single Express process.
+The baseline is a free-tier deployment: no Redis, no background workers, no
+paid chat-generation API, and no vector search. The backend is a single Express
+process. Optional server transcription is the only metered external path.
 
 ## Prerequisites
 
 ### Required Accounts
 
-| Service | Purpose | Free Tier |
-|---------|---------|-----------|
-| MongoDB (local or Atlas) | Database | Local: free. Atlas M0: 512MB free |
-| Render | Backend hosting | Free tier (spins down on idle) |
-| Vercel | Frontend hosting | Free tier available |
-| Google Cloud Console | Google Identity Services Web client | Free |
-| Google AI Studio | Gemini Flash API (primary chat) | Free tier (~1500 RPD) |
-| OpenRouter | Free chat models (fallback) | Free models with per-model RPM/daily caps |
+| Service                  | Purpose                             | Free Tier                                 |
+| ------------------------ | ----------------------------------- | ----------------------------------------- |
+| MongoDB (local or Atlas) | Database                            | Local: free. Atlas M0: 512MB free         |
+| Render                   | Backend hosting                     | Free tier (spins down on idle)            |
+| Vercel                   | Frontend hosting                    | Free tier available                       |
+| Google Cloud Console     | Google Identity Services Web client | Free                                      |
+| Google AI Studio         | Gemini Flash API (primary chat)     | Free tier; quotas vary by project/model   |
+| OpenRouter               | Free chat models (fallback)         | Free models with per-model RPM/daily caps |
 
-**Not used (intentionally free-tier-only):** Anthropic Claude (paid), OpenAI
-GPT/Whisper (paid), Voyage embeddings (paid), Atlas Vector Search (needs M10+),
-Upstash/Redis + BullMQ background workers (not needed — no memory extraction).
+**Optional paid service:** OpenAI Whisper is used only when immersive voice
+cannot use browser recognition (notably Brave). Leave `OPENAI_API_KEY` unset to
+disable that fallback. Audio is authenticated, held in memory, capped at 12
+seconds / 2 MiB, sent directly to OpenAI for transcription, and never logged or
+persisted by AI Bestie. Usage is billed to the configured OpenAI project.
+
+**Not used:** Anthropic Claude, OpenAI chat generation, Voyage embeddings,
+Atlas Vector Search (needs M10+), or Redis/BullMQ workers.
 
 ### Environment Variables (Production)
 
@@ -69,8 +75,16 @@ GOOGLE_CLIENT_ID=1234567890-example.apps.googleusercontent.com
 
 # LLM APIs (free tiers)
 GEMINI_API_KEY=...            # Google AI Studio — primary chat provider
-GEMINI_MODEL=gemini-flash-latest
+GEMINI_MODEL=gemini-3.8-flash
+GEMINI_FALLBACK_MODELS=gemini-3.7-flash,gemini-3.5-flash-lite
 OPENROUTER_API_KEY=...        # OpenRouter — fallback (free models)
+OPENROUTER_MODEL=google/gemma-4-31b-it:free
+
+# Optional Brave/unsupported-browser transcription fallback
+OPENAI_API_KEY=...
+OPENAI_TRANSCRIPTION_MODEL=whisper-1
+TRANSCRIPTION_MAX_DURATION_MS=12000
+TRANSCRIPTION_MAX_BYTES=2097152
 
 # TTS (neural voice replies; optional — falls back to browser voice if absent)
 TTS_ENABLED=true
@@ -79,8 +93,14 @@ TTS_MODEL_VERSION=v1_0
 TTS_SID=3      # af_heart
 TTS_SPEED=0.95
 
-# No Anthropic/OpenAI/Voyage/Redis keys — those services are not used.
+# No Anthropic, OpenAI chat-generation, Voyage, or Redis keys are used.
 ```
+
+The checked-in defaults follow Google's current stable [Gemini model
+catalog](https://ai.google.dev/gemini-api/docs/models) and OpenRouter's
+maintained [free-model router](https://openrouter.ai/collections/free-models/).
+Keep the ordered lists environment-configurable because actual free-tier
+capacity and account access can differ by project and region.
 
 Set `VITE_GOOGLE_CLIENT_ID` to that **same public Web client ID** in the
 Vercel project environment before building the client. It is build-time Vite
@@ -140,8 +160,10 @@ services:
         sync: false
       - key: OPENROUTER_API_KEY
         sync: false
+      - key: OPENAI_API_KEY
+        sync: false
       - key: TTS_ENABLED
-        value: "true"
+        value: 'true'
       - key: CLIENT_URL
         value: https://ai-bestie.vercel.app
       - key: GOOGLE_CLIENT_ID
@@ -185,7 +207,7 @@ Voice replies use **Kokoro** via the `sherpa-onnx-node` native addon, running
    npm run download-tts-model -w server   # → server/.tts-models/kokoro-multi-lang-v1_0/
    ```
 2. **Native libraries**: the addon's shared libraries must be on the linker
-   path *before* Node starts. `npm start` handles this via
+   path _before_ Node starts. `npm start` handles this via
    `server/scripts/with-tts-env.cjs`. If you set a custom start command, prefix
    `LD_LIBRARY_PATH` as shown in the Start Command section.
 3. **Env vars**: `TTS_ENABLED=true` (default). `TTS_MODEL_VERSION` picks the
@@ -224,22 +246,32 @@ Local development is unaffected — your dev machine has ample RAM.
   "buildCommand": "cd client && npm run build",
   "outputDirectory": "client/dist",
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://ai-bestie-api.onrender.com/api/:path*" }
+    { "source": "/api/:path*", "destination": "https://ai-bestie-api.onrender.com/api/:path*" },
+    {
+      "source": "/avatars/:path*",
+      "destination": "https://ai-bestie-api.onrender.com/avatars/:path*"
+    },
+    { "source": "/:path*", "destination": "/index.html" }
   ]
 }
 ```
 
-The `rewrites` rule proxies API calls from the Vercel frontend to the Render backend, avoiding CORS issues.
+The API/avatar rewrites proxy backend calls. The final catch-all is required for
+direct refreshes of client routes such as `/switch-persona`; without it Vercel
+returns its own 404 before React can restore the auth session and route.
 
 ### Vite Configuration
 
 ```typescript
 // client/vite.config.ts
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   server: {
     proxy: {
-      '/api': 'http://localhost:3001', // Dev only
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
     },
   },
 });
@@ -285,33 +317,37 @@ design that needed them was removed. Do not provision Redis for this phase.
 The server uses `helmet()` for production security headers:
 
 ```typescript
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      connectSrc: ["'self'", "https://accounts.google.com/gsi/"],
-      frameSrc: ["'self'", "https://accounts.google.com/gsi/"],
-      imgSrc: ["'self'", "data:", "blob:"],
-      // Voice replies play audio fetched from /api/tts via blob: URLs.
-      mediaSrc: ["'self'", "blob:"],
-      scriptSrc: ["'self'", "https://accounts.google.com/gsi/client"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https://accounts.google.com/gsi/style"],
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        connectSrc: ["'self'", 'https://accounts.google.com/gsi/'],
+        frameSrc: ["'self'", 'https://accounts.google.com/gsi/'],
+        imgSrc: ["'self'", 'data:', 'blob:'],
+        // Voice replies play audio fetched from /api/tts via blob: URLs.
+        mediaSrc: ["'self'", 'blob:'],
+        scriptSrc: ["'self'", 'https://accounts.google.com/gsi/client'],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://accounts.google.com/gsi/style'],
+      },
     },
-  },
-  crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
-  crossOriginEmbedderPolicy: false,
-}));
+    crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
+    crossOriginEmbedderPolicy: false,
+  }),
+);
 ```
 
 ### CORS
 
 ```typescript
-app.use(cors({
-  origin: process.env.CLIENT_URL, // https://ai-bestie.vercel.app
-  credentials: true, // Required for cookies
-  methods: ['GET', 'POST', 'PATCH', 'DELETE'],
-  allowedHeaders: ['Content-Type'],
-}));
+app.use(
+  cors({
+    origin: process.env.CLIENT_URL, // https://ai-bestie.vercel.app
+    credentials: true, // Required for cookies
+    methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+    allowedHeaders: ['Content-Type'],
+  }),
+);
 ```
 
 ### JWT Cookie Security
@@ -322,7 +358,7 @@ const isProduction = process.env.NODE_ENV === 'production';
 
 res.cookie('token', jwt, {
   httpOnly: true,
-  secure: isProduction,     // HTTPS only in production
+  secure: isProduction, // HTTPS only in production
   sameSite: isProduction ? 'strict' : 'lax', // CSRF protection
   maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
   path: '/',
@@ -337,7 +373,12 @@ authRateLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 5 });
 
 // Non-generation API routes: 10 requests per 10 seconds, keyed on userId/IP.
 // The message stream path is skipped here.
-apiRateLimiter = rateLimit({ windowMs: 10 * 1000, max: 10, keyGenerator: requestKey, skip: isMessageStream });
+apiRateLimiter = rateLimit({
+  windowMs: 10 * 1000,
+  max: 10,
+  keyGenerator: requestKey,
+  skip: isMessageStream,
+});
 
 // The one authoritative generation limit: 20 messages per minute, keyed on userId/IP.
 chatRateLimiter = rateLimit({ windowMs: 60 * 1000, max: 20, keyGenerator: requestKey });
@@ -365,14 +406,14 @@ Response:
 
 ### Recommended Monitoring
 
-| Metric | Tool | Alert Threshold |
-|--------|------|----------------|
-| API response time | Render metrics | p99 > 2s |
-| Error rate | Render logs | > 5% |
-| MongoDB connections | Atlas monitoring | > 80% of pool |
-| LLM API errors (Gemini/OpenRouter) | Server logs | > 1% |
-| Free-tier rate-limit (429) frequency | Server logs | Spike detection |
-| Rate limit violations | Server logs | Spike detection |
+| Metric                               | Tool             | Alert Threshold |
+| ------------------------------------ | ---------------- | --------------- |
+| API response time                    | Render metrics   | p99 > 2s        |
+| Error rate                           | Render logs      | > 5%            |
+| MongoDB connections                  | Atlas monitoring | > 80% of pool   |
+| LLM API errors (Gemini/OpenRouter)   | Server logs      | > 1%            |
+| Free-tier rate-limit (429) frequency | Server logs      | Spike detection |
+| Rate limit violations                | Server logs      | Spike detection |
 
 ## CI/CD
 
@@ -425,16 +466,17 @@ jobs:
 
 ## Cost Estimates
 
-This phase is designed to run at **$0**.
+The baseline chat deployment is designed to run at **$0**. Enabling the
+optional OpenAI transcription fallback adds metered usage.
 
-| Service | Monthly Cost |
-|---------|-------------|
-| LLM (Gemini Flash free tier) | Free (~1500 RPD) |
+| Service                                | Monthly Cost                    |
+| -------------------------------------- | ------------------------------- |
+| LLM (Gemini Flash free tier)           | Free; account/model quotas vary |
 | LLM (OpenRouter free models, fallback) | Free (per-model RPM/daily caps) |
-| MongoDB (local or Atlas M0) | Free |
-| Render (free web service) | Free (spins down on idle) |
-| Vercel (free tier) | Free |
-| **Total** | **$0/month** |
+| MongoDB (local or Atlas M0)            | Free                            |
+| Render (free web service)              | Free (spins down on idle)       |
+| Vercel (free tier)                     | Free                            |
+| **Baseline total (without OpenAI STT)**| **$0/month**                    |
 
 ### Caveats where "free" can silently become paid
 

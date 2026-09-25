@@ -2,8 +2,8 @@ import dotenv from 'dotenv';
 import path from 'path';
 
 // Load env from both the repo root and the server workspace so the key works
-// whether you paste it into `/.env` or `/server/.env`. First load wins; the
-// server file (more specific) is loaded first so it takes precedence.
+// whether you paste it into `/.env` or `/server/.env`. Dotenv keeps the first
+// value it sees, so the documented root file is authoritative.
 const rootDir = path.resolve(__dirname, '../../..');
 dotenv.config({ path: path.resolve(rootDir, '.env') });
 dotenv.config({ path: path.resolve(rootDir, 'server/.env') });
@@ -16,6 +16,12 @@ const DEV_PLACEHOLDERS = new Set([
 
 const isPlaceholder = (v: string | undefined): boolean =>
   !v || v.trim() === '' || DEV_PLACEHOLDERS.has(v);
+
+const modelList = (value: string | undefined, defaults: string): string[] =>
+  (value ?? defaults)
+    .split(',')
+    .map((model) => model.trim())
+    .filter(Boolean);
 
 /**
  * Fail fast in production if required environment variables are missing or
@@ -60,30 +66,34 @@ export const config = {
   llm: {
     // Primary: Google Gemini (free tier) via its OpenAI-compatible endpoint.
     // Get a free key at https://aistudio.google.com/apikey
-    // gemini-2.5-flash is deprecated for new keys (404); gemini-flash-latest is
-    // Google's maintained alias that always points to the current free Flash.
+    // These stable identifiers are current as of 2026-09. Keep the order
+    // configurable because free-tier capacity differs by account and region.
     geminiApiKey: process.env.GEMINI_API_KEY || '',
-    geminiModel: process.env.GEMINI_MODEL || 'gemini-flash-latest',
-    // Free-tier Gemini fallbacks tried in order if the primary 429s persistently.
-    geminiFallbackModels: (process.env.GEMINI_FALLBACK_MODELS ||
-      'gemini-2.0-flash,gemini-3.5-flash')
-      .split(',')
-      .map((m) => m.trim())
-      .filter(Boolean),
+    geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+    geminiFallbackModels: modelList(
+      process.env.GEMINI_FALLBACK_MODELS,
+      'gemini-3.7-flash,gemini-3.5-flash-lite',
+    ),
 
     // Secondary: OpenRouter (OpenAI-compatible) — used when Gemini is unavailable
-    // (no key) or all its models are rate-limited.
+    // (no key) or all its models are rate-limited. OpenRouter has no
+    // catch-all free-router alias — each free model needs its own `:free`
+    // id (verified against GET https://openrouter.ai/api/v1/models as of
+    // 2026-09). Operators can override/extend via OPENROUTER_MODEL and
+    // OPENROUTER_FALLBACK_MODELS as the free catalog changes.
+    openrouterModel: process.env.OPENROUTER_MODEL || 'google/gemma-4-31b-it:free',
+    openrouterFallbackModels: modelList(
+      process.env.OPENROUTER_FALLBACK_MODELS,
+      'qwen/qwen3.8-27b:free,nvidia/nemotron-3-ultra-550b-a55b:free',
+    ),
     openrouterApiKey: process.env.OPENROUTER_API_KEY || '',
-    openrouterModel: process.env.OPENROUTER_MODEL || 'google/gemma-4-26b-a4b-it:free',
-    // Free models rotate upstream rate limits; these are tried in order if the
-    // primary returns a persistent 429/5xx. Override via OPENROUTER_FALLBACK_MODELS.
-    openrouterFallbackModels: (process.env.OPENROUTER_FALLBACK_MODELS ||
-      'meta-llama/llama-3.3-70b-instruct:free,meta-llama/llama-3.2-3b-instruct:free,qwen/qwen3-next-80b-a3b-instruct:free')
-      .split(',')
-      .map((m) => m.trim())
-      .filter(Boolean),
     // Optional: OpenAI Whisper API for speech-to-text (browser Web Speech API is the free default)
     openaiApiKey: process.env.OPENAI_API_KEY || '',
+  },
+  transcription: {
+    model: process.env.OPENAI_TRANSCRIPTION_MODEL || 'whisper-1',
+    maxBytes: Number(process.env.TRANSCRIPTION_MAX_BYTES || 2 * 1024 * 1024),
+    maxDurationMs: Number(process.env.TRANSCRIPTION_MAX_DURATION_MS || 12_000),
   },
   client: {
     url: process.env.CLIENT_URL || 'http://localhost:5173',

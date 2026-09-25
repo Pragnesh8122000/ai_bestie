@@ -16,7 +16,8 @@ export default function ChatInput() {
   const { personas } = usePersonaStore();
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const sttSupported = isSTTSupported();
-  const bestieName = personas.find((p) => p.id === activeConversation?.personaId)?.name || 'your bestie';
+  const bestieName =
+    personas.find((p) => p.id === activeConversation?.personaId)?.name || 'your bestie';
   // Tracks the in-flight recognition session so it can be stopped (not just
   // left running) if the component unmounts mid-listen — otherwise the mic
   // stays open with no one left to consume its result.
@@ -75,7 +76,7 @@ export default function ChatInput() {
       // and Edge use the same backend and work fine; Safari uses its own.
       if (code === 'network') {
         setMicError(
-          'Voice typing isn\u2019t available in this browser (it blocks the speech service). Try Chrome, Edge, or Safari \u2014 or just type.'
+          'This browser blocks voice typing. Use Voice chat for the server transcription fallback, try Chrome/Edge/Safari, or type instead.',
         );
       } else if (code === 'not-allowed' || code === 'service-not-allowed') {
         setMicError('Mic access is blocked. Allow microphone access for this site and try again.');
@@ -96,10 +97,7 @@ export default function ChatInput() {
   };
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="sticky bottom-4 z-20 px-3 sm:bottom-6 sm:px-8"
-    >
+    <form onSubmit={handleSubmit} className="sticky bottom-4 z-20 px-3 sm:bottom-6 sm:px-8">
       <div className="mx-auto flex w-full max-w-2xl items-end gap-2 rounded-[32px] border border-ember/25 bg-ink-2/90 p-2 shadow-2xl backdrop-blur-md transition-shadow duration-200 focus-within:border-ember/50 focus-within:shadow-[0_0_0_1px_var(--color-ember-glow),0_20px_50px_-15px_rgba(0,0,0,0.6)] sm:gap-3 sm:p-2.5">
         {/* Talk — larger, more prominent */}
         {sttSupported && (

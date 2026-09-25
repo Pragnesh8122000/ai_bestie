@@ -186,7 +186,6 @@ function getTraitDescriptor(
   };
 
   const desc = descriptions[key] || {};
-  const midPoint = (range.min + range.max) / 2;
   const midRange = (range.max - range.min) / 3;
 
   if (value <= range.min + midRange) return desc.low || '';

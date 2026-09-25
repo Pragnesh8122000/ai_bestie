@@ -15,7 +15,6 @@ function loadGoogleIdentityServices(): Promise<void> {
   const pending = new Promise<void>((resolve, reject) => {
     const existing = document.getElementById(SCRIPT_ID) as HTMLScriptElement | null;
     const script = existing ?? document.createElement('script');
-    let timeout: ReturnType<typeof setTimeout>;
     const cleanUp = () => {
       clearTimeout(timeout);
       script.removeEventListener('load', onLoad);
@@ -38,7 +37,7 @@ function loadGoogleIdentityServices(): Promise<void> {
 
     script.addEventListener('load', onLoad);
     script.addEventListener('error', onError);
-    timeout = setTimeout(() => {
+    const timeout = setTimeout(() => {
       cleanUp();
       script.remove();
       reject(new Error('Google Identity Services timed out'));

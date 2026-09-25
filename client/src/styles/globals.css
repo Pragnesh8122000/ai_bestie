@@ -109,30 +109,34 @@ body {
   position: absolute;
   inset: -20%;
   border-radius: 9999px;
-  background: radial-gradient(
-    circle at 50% 50%,
-    rgba(240, 164, 92, 0.12),
-    transparent 60%
-  );
+  background: radial-gradient(circle at 50% 50%, rgba(240, 164, 92, 0.12), transparent 60%);
   filter: blur(20px);
   pointer-events: none;
+  scale: calc(1 + var(--orb-level, 0) * 0.28);
+  opacity: calc(0.6 + var(--orb-level, 0) * 0.4);
+  transition:
+    scale 100ms linear,
+    opacity 100ms linear;
 }
 
 .orb-core {
   position: relative;
   z-index: 3;
   border-radius: 9999px;
-  background:
-    radial-gradient(
-      circle at 35% 30%,
-      var(--color-ember-soft),
-      var(--color-ember) 45%,
-      var(--color-ember-dim) 100%
-    );
+  background: radial-gradient(
+    circle at 35% 30%,
+    var(--color-ember-soft),
+    var(--color-ember) 45%,
+    var(--color-ember-dim) 100%
+  );
   box-shadow:
     0 0 32px rgba(240, 164, 92, 0.5),
     0 0 80px rgba(240, 164, 92, 0.22),
     inset 0 0 24px rgba(255, 248, 230, 0.4);
+  scale: calc(1 + var(--orb-level, 0) * 0.2);
+  transition:
+    scale 80ms linear,
+    filter 120ms linear;
 }
 
 .orb-ring {
@@ -176,7 +180,8 @@ body {
 }
 
 @keyframes orb-breathe {
-  0%, 100% {
+  0%,
+  100% {
     transform: scale(1);
     box-shadow:
       0 0 32px rgba(240, 164, 92, 0.45),
@@ -193,35 +198,82 @@ body {
 }
 
 @keyframes orb-halo {
-  0% { transform: scale(1); opacity: 0.4; }
-  50% { transform: scale(1.22); opacity: 0.1; }
-  100% { transform: scale(1); opacity: 0.4; }
+  0% {
+    transform: scale(1);
+    opacity: 0.4;
+  }
+  50% {
+    transform: scale(1.22);
+    opacity: 0.1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0.4;
+  }
 }
 
 @keyframes orb-pulse-soft {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.05); }
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
 }
 
 @keyframes orb-inward {
-  0% { transform: scale(1.6); opacity: 0; }
-  60% { opacity: 0.55; }
-  100% { transform: scale(1); opacity: 0; }
+  0% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+  60% {
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0;
+  }
 }
 
 @keyframes orb-outward {
-  0% { transform: scale(1); opacity: 0.6; }
-  100% { transform: scale(1.8); opacity: 0; }
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
 }
 
 @keyframes orb-think {
-  0%, 100% {
+  0%,
+  100% {
     transform: scale(0.9);
     filter: brightness(0.85);
   }
   50% {
     transform: scale(1.02);
     filter: brightness(1.15);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orb-core,
+  .orb-ring,
+  .orb-glow,
+  .talk-pulse,
+  .status-dot,
+  .typing-dots span,
+  .stream-caret {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .orb-core,
+  .orb-glow {
+    scale: 1;
   }
 }
 
@@ -236,7 +288,9 @@ body {
   animation: caret-blink 1s steps(2) infinite;
 }
 @keyframes caret-blink {
-  50% { opacity: 0; }
+  50% {
+    opacity: 0;
+  }
 }
 
 /* Mic pulse (recording) */
@@ -244,8 +298,13 @@ body {
   animation: talk-pulse 1.4s ease-in-out infinite;
 }
 @keyframes talk-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(240, 164, 92, 0.45); }
-  50% { box-shadow: 0 0 0 14px rgba(240, 164, 92, 0); }
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(240, 164, 92, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 14px rgba(240, 164, 92, 0);
+  }
 }
 
 /* Status indicator pulse (header "voice replies" dot) */
@@ -253,8 +312,13 @@ body {
   animation: status-pulse 2s ease-in-out infinite;
 }
 @keyframes status-pulse {
-  0%, 100% { opacity: 0.35; }
-  50% { opacity: 1; }
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 /* Typing indicator — three dots, staggered bounce */
@@ -272,11 +336,23 @@ body {
   opacity: 0.5;
   animation: typing-bounce 1.1s ease-in-out infinite;
 }
-.typing-dots span:nth-child(2) { animation-delay: 0.15s; }
-.typing-dots span:nth-child(3) { animation-delay: 0.3s; }
+.typing-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.typing-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
 @keyframes typing-bounce {
-  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
-  30% { transform: translateY(-3px); opacity: 1; }
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
 }
 
 /* Float-up for message bubbles */
@@ -284,8 +360,14 @@ body {
   animation: float-up 280ms ease-out;
 }
 @keyframes float-up {
-  0% { opacity: 0; transform: translateY(14px); }
-  100% { opacity: 1; transform: translateY(0); }
+  0% {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* ──────────────────────────────────────────────────────────────────────
@@ -297,11 +379,17 @@ body {
    ────────────────────────────────────────────────────────────────────── */
 
 /* Collapse the outer margins so a bubble doesn't gain phantom padding. */
-.msg-prose > :first-child { margin-top: 0; }
-.msg-prose > :last-child { margin-bottom: 0; }
+.msg-prose > :first-child {
+  margin-top: 0;
+}
+.msg-prose > :last-child {
+  margin-bottom: 0;
+}
 
 /* Long URLs and unbroken tokens must not widen the transcript column. */
-.msg-prose { overflow-wrap: anywhere; }
+.msg-prose {
+  overflow-wrap: anywhere;
+}
 
 .msg-prose p {
   margin: 0 0 0.75em;
@@ -319,10 +407,18 @@ body {
   color: var(--color-ember-soft);
   margin: 1.2em 0 0.5em;
 }
-.msg-prose h1 { font-size: 1.3em; }
-.msg-prose h2 { font-size: 1.18em; }
-.msg-prose h3 { font-size: 1.06em; }
-.msg-prose h4 { font-size: 1em; }
+.msg-prose h1 {
+  font-size: 1.3em;
+}
+.msg-prose h2 {
+  font-size: 1.18em;
+}
+.msg-prose h3 {
+  font-size: 1.06em;
+}
+.msg-prose h4 {
+  font-size: 1em;
+}
 
 .msg-prose ul,
 .msg-prose ol {
@@ -342,14 +438,20 @@ body {
   font-family: var(--font-mono);
   font-size: 0.85em;
 }
-.msg-prose ul { list-style-type: disc; }
-.msg-prose ol { list-style-type: decimal; }
+.msg-prose ul {
+  list-style-type: disc;
+}
+.msg-prose ol {
+  list-style-type: decimal;
+}
 /* Nested lists tighten up and drop to a hollow marker. */
 .msg-prose li > ul,
 .msg-prose li > ol {
   margin: 0.3em 0 0.15em;
 }
-.msg-prose li > ul { list-style-type: circle; }
+.msg-prose li > ul {
+  list-style-type: circle;
+}
 
 /* GFM task lists: the checkbox replaces the bullet. */
 .msg-prose li:has(> input[type='checkbox']) {
@@ -366,7 +468,9 @@ body {
   font-weight: 650;
   color: var(--color-ember-soft);
 }
-.msg-prose em { font-style: italic; }
+.msg-prose em {
+  font-style: italic;
+}
 .msg-prose del {
   text-decoration: line-through;
   color: var(--color-linen-dim);
@@ -477,13 +581,23 @@ body {
 
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
-  .orb-core, .orb-ring, .stream-caret, .talk-pulse, .status-dot, .float-up, .typing-dots span {
+  .orb-core,
+  .orb-ring,
+  .stream-caret,
+  .talk-pulse,
+  .status-dot,
+  .float-up,
+  .typing-dots span {
     animation: none !important;
   }
-  .orb[data-state='thinking'] .orb-ring { opacity: 0.25; }
+  .orb[data-state='thinking'] .orb-ring {
+    opacity: 0.25;
+  }
 }

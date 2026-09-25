@@ -21,7 +21,9 @@ export class AppError extends Error {
   }
 }
 
-export const catchAsync = (fn: (req: Request, res: Response, next: NextFunction) => Promise<any>) => {
+export const catchAsync = (
+  fn: (req: Request, res: Response, next: NextFunction) => Promise<any>,
+) => {
   return (req: Request, res: Response, next: NextFunction) => {
     fn(req, res, next).catch(next);
   };
@@ -54,12 +56,23 @@ export const globalErrorHandler = (
     return;
   }
 
+  if ((err as any).type === 'entity.too.large' || (err as any).status === 413) {
+    res.status(413).json({
+      success: false,
+      message: 'Upload is too large.',
+      code: 'UPLOAD_TOO_LARGE',
+    });
+    return;
+  }
+
   // Mongoose validation error
   if (err.name === 'ValidationError') {
     res.status(400).json({
       success: false,
       message: 'Validation error',
-      errors: (err as any).errors ? Object.values((err as any).errors).map((e: any) => e.message) : undefined,
+      errors: (err as any).errors
+        ? Object.values((err as any).errors).map((e: any) => e.message)
+        : undefined,
     });
     return;
   }

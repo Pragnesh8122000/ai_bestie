@@ -19,7 +19,6 @@
 import { createWriteStream, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import fs from 'node:fs';
 
 const MODEL_NAME =
   process.env.TTS_MODEL_VERSION?.trim() === 'v0_19'

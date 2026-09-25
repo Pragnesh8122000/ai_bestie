@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup, act } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, act, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import '@testing-library/jest-dom/vitest';
@@ -10,8 +10,16 @@ vi.mock('../utils/speech', () => ({
   beginSpeech: vi.fn(),
   stopSpeaking: vi.fn(),
   setTtsStateListener: vi.fn(),
+  setTtsLevelListener: vi.fn(),
   listenOnce: vi.fn(),
   isSTTSupported: () => false,
+}));
+
+vi.mock('../utils/voiceCapture', () => ({
+  startVoiceTurn: vi.fn(() => ({
+    promise: new Promise(() => {}),
+    stop: vi.fn(),
+  })),
 }));
 
 vi.mock('../api/conversation', () => ({
@@ -19,6 +27,7 @@ vi.mock('../api/conversation', () => ({
     list: vi.fn(),
     get: vi.fn(),
     getDefault: vi.fn(),
+    openPersona: vi.fn(),
     create: vi.fn(),
     rename: vi.fn(),
     delete: vi.fn(),
@@ -36,6 +45,7 @@ import { useAuthStore } from '../stores/authStore';
 import { usePersonaStore } from '../stores/personaStore';
 import { conversationApi } from '../api/conversation';
 import { personaApi } from '../api/persona';
+import { startVoiceTurn } from '../utils/voiceCapture';
 
 const api = conversationApi as unknown as Record<string, ReturnType<typeof vi.fn>>;
 const personaApiMock = personaApi as unknown as Record<string, ReturnType<typeof vi.fn>>;
@@ -51,7 +61,8 @@ beforeEach(() => {
     matches: false,
     media: query,
     addEventListener: (_: string, cb: (e: MediaQueryListEvent) => void) => mediaListeners.add(cb),
-    removeEventListener: (_: string, cb: (e: MediaQueryListEvent) => void) => mediaListeners.delete(cb),
+    removeEventListener: (_: string, cb: (e: MediaQueryListEvent) => void) =>
+      mediaListeners.delete(cb),
   })) as any;
 
   vi.clearAllMocks();
@@ -82,7 +93,19 @@ beforeEach(() => {
   });
   api.list.mockResolvedValue({ data: { data: { conversations: [conversation], hasMore: false } } });
   personaApiMock.getArchetypes.mockResolvedValue({
-    data: { data: { archetypes: [{ type: 'friend', displayName: 'The Friend', corePurpose: '', defaultTraits: {}, traitRanges: {} }] } },
+    data: {
+      data: {
+        archetypes: [
+          {
+            type: 'friend',
+            displayName: 'The Friend',
+            corePurpose: '',
+            defaultTraits: {},
+            traitRanges: {},
+          },
+        ],
+      },
+    },
   });
   document.body.style.overflow = '';
 });
@@ -95,26 +118,73 @@ describe('ChatPage drawer', () => {
     expect(await screen.findByRole('heading', { name: 'Lisbon trip' })).toBeInTheDocument();
   });
 
-  it('keeps explicit voice state controls coherent in the sidebar, header, and mobile drawer', async () => {
+  it('enters orb-first voice mode and returns to the exact active text chat', async () => {
     const user = userEvent.setup();
-    useChatStore.setState({ ttsEnabled: false });
+    const active = useChatStore.getState().activeConversation!;
+    useChatStore.setState({
+      ttsEnabled: false,
+      activeConversation: {
+        ...active,
+        messages: [
+          {
+            _id: 'kept-message',
+            role: 'assistant',
+            content: 'This must remain.',
+            timestamp: '2026-09-17T17:00:00.000Z',
+          },
+        ],
+      },
+    });
     render(<ChatPage />, { wrapper: MemoryRouter });
 
-    const initialControls = screen.getAllByRole('switch', { name: 'Voice replies off' });
-    expect(initialControls).toHaveLength(2);
-    expect(screen.getByText('Off · Replies are silent')).toBeInTheDocument();
-    expect(screen.getByText('Voice · Off')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Start voice chat' })).toHaveLength(2);
+    expect(screen.getByText('This must remain.')).toBeInTheDocument();
+    await user.click(screen.getAllByRole('button', { name: 'Start voice chat' })[1]);
 
-    await user.click(screen.getByRole('button', { name: /open conversations/i }));
-    const drawer = await screen.findByRole('dialog', { name: /conversations/i });
-    const drawerControl = Array.from(drawer.querySelectorAll('[role="switch"]'))[0];
-    expect(drawerControl).toHaveAttribute('aria-checked', 'false');
-    expect(drawerControl).toHaveTextContent('Off · Replies are silent');
+    expect(await screen.findByRole('region', { name: 'Voice chat with Sam' })).toBeInTheDocument();
+    expect(screen.queryByText('This must remain.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Voice chat transcript' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Mute microphone' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'End voice chat' })).toBeInTheDocument();
 
-    await user.click(drawerControl);
-    expect(screen.getAllByRole('switch', { name: 'Voice replies on' })).toHaveLength(3);
-    expect(screen.getAllByText('On · Replies play aloud')).toHaveLength(2);
-    expect(screen.getByText('Voice · On')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Back to text chat' }));
+
+    expect(await screen.findByText('This must remain.')).toBeInTheDocument();
+    expect(useChatStore.getState().activeConversationId).toBe('a');
+    expect(useChatStore.getState().activeConversation?.messages[0]._id).toBe('kept-message');
+  });
+
+  it('pauses for an explicit retry after a microphone failure', async () => {
+    vi.useFakeTimers();
+    try {
+      let rejectCapture: (error: Error) => void = () => {};
+      vi.mocked(startVoiceTurn).mockReturnValueOnce({
+        promise: new Promise((_, reject) => {
+          rejectCapture = reject;
+        }),
+        stop: vi.fn(),
+      });
+      render(<ChatPage />, { wrapper: MemoryRouter });
+
+      fireEvent.click(screen.getAllByRole('button', { name: 'Start voice chat' })[1]);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      await act(async () => {
+        rejectCapture(new Error('Mic access is blocked. Allow it and try again.'));
+        await Promise.resolve();
+      });
+
+      expect(screen.getByRole('status')).toHaveTextContent('Mic access is blocked');
+      expect(screen.getByRole('button', { name: 'Unmute microphone' })).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(startVoiceTurn).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('shows the persona archetype on saved and streaming assistant message rows', async () => {
@@ -192,7 +262,12 @@ describe('ChatPage drawer', () => {
     api.list.mockResolvedValue({
       data: { data: { conversations: [current, saved], hasMore: false } },
     });
-    api.get.mockImplementation(() => new Promise((resolve) => { resolveSaved = resolve; }));
+    api.get.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSaved = resolve;
+        }),
+    );
     api.getDefault.mockResolvedValue({
       data: {
         data: {
@@ -257,12 +332,14 @@ describe('ChatPage drawer', () => {
     useChatStore.setState({
       activeConversation: {
         ...activeConversation,
-        messages: [{
-          _id: 'm1',
-          role: 'assistant',
-          content: 'Take your time.',
-          timestamp: '2026-09-17T17:00:00.000Z',
-        }],
+        messages: [
+          {
+            _id: 'm1',
+            role: 'assistant',
+            content: 'Take your time.',
+            timestamp: '2026-09-17T17:00:00.000Z',
+          },
+        ],
       },
     });
     personaApiMock.getArchetypes.mockRejectedValue(new Error('offline'));

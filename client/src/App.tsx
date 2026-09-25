@@ -5,7 +5,7 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import ChatPage from './pages/ChatPage';
 import GuestChatPage from './pages/GuestChatPage';
-import CreatePersonaPage from './pages/CreatePersonaPage';
+import SwitchPersonaPage from './pages/SwitchPersonaPage';
 
 function App() {
   const { initialize, isAuthenticated, isGuest, isLoading } = useAuthStore();
@@ -33,21 +33,25 @@ function App() {
         {/* Public routes */}
         <Route
           path="/login"
-          element={
-            isAuthenticated ? <Navigate to="/" replace /> : <LoginPage />
-          }
+          element={isAuthenticated ? <Navigate to="/" replace /> : <LoginPage />}
         />
         <Route
           path="/register"
-          element={
-            isAuthenticated ? <Navigate to="/" replace /> : <RegisterPage />
-          }
+          element={isAuthenticated ? <Navigate to="/" replace /> : <RegisterPage />}
         />
 
         <Route
+          path="/switch-persona"
+          element={isAuthenticated ? <SwitchPersonaPage /> : <Navigate to="/login" replace />}
+        />
+        <Route
           path="/create-persona"
           element={
-            isAuthenticated ? <CreatePersonaPage /> : <Navigate to="/login" replace />
+            isAuthenticated ? (
+              <Navigate to="/switch-persona" replace />
+            ) : (
+              <Navigate to="/login" replace />
+            )
           }
         />
 

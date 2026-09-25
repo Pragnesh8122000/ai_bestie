@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { personaApi, Persona, Archetype, CreatePersonaInput, UpdatePersonaInput } from '../api/persona';
+import { personaApi, Persona, Archetype, UpdatePersonaInput } from '../api/persona';
 
 interface PersonaState {
   personas: Persona[];
@@ -10,7 +10,6 @@ interface PersonaState {
 
   fetchArchetypes: () => Promise<void>;
   fetchPersonas: () => Promise<void>;
-  createPersona: (data: CreatePersonaInput) => Promise<Persona>;
   updatePersona: (id: string, data: UpdatePersonaInput) => Promise<Persona>;
   deletePersona: (id: string) => Promise<void>;
   setActivePersona: (id: string) => void;
@@ -49,23 +48,6 @@ export const usePersonaStore = create<PersonaState>((set) => ({
     }
   },
 
-  createPersona: async (data: CreatePersonaInput) => {
-    try {
-      set({ isLoading: true, error: null });
-      const response = await personaApi.create(data);
-      const persona = response.data.data.persona;
-      set((state) => ({
-        personas: [...state.personas, persona],
-        activePersonaId: persona.id,
-        isLoading: false,
-      }));
-      return persona;
-    } catch (error: any) {
-      set({ error: error.response?.data?.message || 'Failed to create persona', isLoading: false });
-      throw error;
-    }
-  },
-
   updatePersona: async (id: string, data: UpdatePersonaInput) => {
     try {
       set({ error: null });
@@ -86,9 +68,10 @@ export const usePersonaStore = create<PersonaState>((set) => ({
       await personaApi.delete(id);
       set((state) => ({
         personas: state.personas.filter((p) => p.id !== id),
-        activePersonaId: state.activePersonaId === id
-          ? state.personas.find((p) => p.id !== id)?.id || null
-          : state.activePersonaId,
+        activePersonaId:
+          state.activePersonaId === id
+            ? state.personas.find((p) => p.id !== id)?.id || null
+            : state.activePersonaId,
       }));
     } catch (error: any) {
       set({ error: error.response?.data?.message || 'Failed to delete persona' });

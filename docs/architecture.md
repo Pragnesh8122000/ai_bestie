@@ -163,12 +163,12 @@ authStore.ts (Zustand)
 
 personaStore.ts (Zustand)
 ├── state: personas[], activePersonaId, archetypes[], isLoading, error
-├── actions: fetchArchetypes, fetchPersonas, createPersona, updatePersona, deletePersona
-└── writes: localStorage activePersonaId
+├── actions: fetchArchetypes, fetchPersonas, updatePersona, deletePersona
+└── hydrates: selected conversation responses upsert their own persona
 
 chatStore.ts (Zustand)
 ├── state: conversations[], activeConversation, avatarState, isStreaming, streamingContent
-├── actions: fetchConversations, openDefaultConversation, switchConversation, createConversation, deleteConversation, sendMessage
+├── actions: fetchConversations, openDefaultConversation, openPersonaConversation, switchConversation, createConversation, deleteConversation, sendMessage
 └── manages: per-load/per-stream generations, single-flight sends, SSE parsing, avatar state machine
 ```
 
@@ -185,10 +185,11 @@ After login:
   → On success: redirect to chat
   → chatStore.fetchConversations()
 
-Persona creation:
-  → personaStore.createPersona()
-  → On success: set as activePersona
-  → Navigate to chat
+Persona switch:
+  → chatStore.openPersonaConversation(personaId)
+  → POST /api/conversations/persona/:personaId/open
+  → Resume latest or create the existing persona's first chat
+  → Navigate to the active chat without a second GET
 
 Chat flow:
   → chatStore.sendMessage(content)
@@ -224,15 +225,15 @@ Request
 
 The global error handler (`errors.ts`) normalizes all errors:
 
-| Error Type | Status | Response |
-|------------|--------|----------|
-| `AppError` | `error.statusCode` | `{ success: false, message, errors? }` |
-| `ZodError` | 400 | `{ success: false, message: "Validation error", errors: {field: msg} }` |
-| Mongoose `ValidationError` | 400 | `{ success: false, message, errors: {field: msg} }` |
-| MongoDB duplicate key (11000) | 409 | `{ success: false, message: "Email already registered" }` |
-| `JsonWebTokenError` | 401 | `{ success: false, message: "Invalid token" }` |
-| `TokenExpiredError` | 401 | `{ success: false, message: "Token expired" }` |
-| Unknown errors | 500 | `{ success: false, message: "Internal server error" }` |
+| Error Type                    | Status             | Response                                                                |
+| ----------------------------- | ------------------ | ----------------------------------------------------------------------- |
+| `AppError`                    | `error.statusCode` | `{ success: false, message, errors? }`                                  |
+| `ZodError`                    | 400                | `{ success: false, message: "Validation error", errors: {field: msg} }` |
+| Mongoose `ValidationError`    | 400                | `{ success: false, message, errors: {field: msg} }`                     |
+| MongoDB duplicate key (11000) | 409                | `{ success: false, message: "Email already registered" }`               |
+| `JsonWebTokenError`           | 401                | `{ success: false, message: "Invalid token" }`                          |
+| `TokenExpiredError`           | 401                | `{ success: false, message: "Token expired" }`                          |
+| Unknown errors                | 500                | `{ success: false, message: "Internal server error" }`                  |
 
 ## Security Layers
 

@@ -108,8 +108,8 @@ describe('ChatInput voice typing', () => {
     reject(new Error('network'));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/blocks the speech service/i);
-    expect(alert).toHaveTextContent(/chrome, edge, or safari/i);
+    expect(alert).toHaveTextContent(/server transcription fallback/i);
+    expect(alert).toHaveTextContent(/chrome\/edge\/safari/i);
   });
 
   it('tells the user to grant mic access when permission is denied', async () => {

@@ -5,30 +5,31 @@
 ## Overview
 
 Each companion is defined by:
+
 1. **Archetype** — The behavioral template (Mentor, Friend, Therapist, Coach)
 2. **Traits** — Five adjustable sliders that fine-tune personality within archetype bounds
 3. **System Prompt** — A 5-layer assembled prompt that drives every conversation
 
 ## Archetypes
 
-| Archetype | Core Purpose | Voice Style |
-|-----------|-------------|------------|
-| **Mentor** | Guide, challenge, and inspire through wisdom and thoughtful questioning | Calm authority. Uses analogies from nature/business/philosophy. Probes before answering. Celebrates progress. References past conversations. |
-| **Friend** | Listen, validate, and stand by the user with humor and heart | Casual and warm. Uses humor naturally. Validates before suggesting ("I hear you" before "have you considered"). Contractions, informal, supportive without saccharine. |
-| **Therapist** | Provide a reflective, non-judgmental space for self-exploration | Calm, measured reflection. Asks more than tells. Mirrors user language. Never prescribes solutions. Uses "It sounds like…" / "What I'm hearing is…" Warm but professional. |
-| **Coach** | Drive action, build habits, and hold the user accountable | Energetic, direct. Uses frameworks (SMART, GROW, Eisenhower). Holds accountable. Follows up on commitments. Celebrates wins loudly. Every conversation ends with a concrete next step. |
+| Archetype     | Core Purpose                                                            | Voice Style                                                                                                                                                                            |
+| ------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Mentor**    | Guide, challenge, and inspire through wisdom and thoughtful questioning | Calm authority. Uses analogies from nature/business/philosophy. Probes before answering. Celebrates progress. References past conversations.                                           |
+| **Friend**    | Listen, validate, and stand by the user with humor and heart            | Casual and warm. Uses humor naturally. Validates before suggesting ("I hear you" before "have you considered"). Contractions, informal, supportive without saccharine.                 |
+| **Therapist** | Provide a reflective, non-judgmental space for self-exploration         | Calm, measured reflection. Asks more than tells. Mirrors user language. Never prescribes solutions. Uses "It sounds like…" / "What I'm hearing is…" Warm but professional.             |
+| **Coach**     | Drive action, build habits, and hold the user accountable               | Energetic, direct. Uses frameworks (SMART, GROW, Eisenhower). Holds accountable. Follows up on commitments. Celebrates wins loudly. Every conversation ends with a concrete next step. |
 
 ## 5-Trait System
 
 Each persona has 5 trait sliders ranging from 1 (low) to 10 (high):
 
-| Trait | Low (1-3) | Medium (4-7) | High (8-10) |
-|-------|-----------|---------------|-------------|
-| **Directness** | Hinting, suggestive, indirect | Balanced, context-dependent | Blunt, straightforward, no sugarcoating |
-| **Warmth** | Formal, clinical, detached | Friendly, approachable | Effusive, nurturing, deeply caring |
-| **Proactivity** | Reactive, waits for prompts | Balanced, offers suggestions | Initiative-taking, unprompted advice |
-| **Depth** | Surface-level, brief responses | Moderate detail, balanced | Deep analysis, thorough explanations |
-| **Accountability** | Lax, no follow-up | Moderate, occasional check-ins | Strict, tracks commitments, calls out drift |
+| Trait              | Low (1-3)                      | Medium (4-7)                   | High (8-10)                                 |
+| ------------------ | ------------------------------ | ------------------------------ | ------------------------------------------- |
+| **Directness**     | Hinting, suggestive, indirect  | Balanced, context-dependent    | Blunt, straightforward, no sugarcoating     |
+| **Warmth**         | Formal, clinical, detached     | Friendly, approachable         | Effusive, nurturing, deeply caring          |
+| **Proactivity**    | Reactive, waits for prompts    | Balanced, offers suggestions   | Initiative-taking, unprompted advice        |
+| **Depth**          | Surface-level, brief responses | Moderate detail, balanced      | Deep analysis, thorough explanations        |
+| **Accountability** | Lax, no follow-up              | Moderate, occasional check-ins | Strict, tracks commitments, calls out drift |
 
 ### Trait Clamping
 
@@ -42,13 +43,13 @@ Clamped to: directness = 6
 
 ### Archetype Trait Ranges
 
-| Trait | Mentor | Friend | Therapist | Coach |
-|-------|--------|--------|-----------|-------|
-| Directness | 5-9 | 2-6 | 1-5 | 6-10 |
-| Warmth | 4-8 | 7-10 | 5-9 | 3-7 |
-| Proactivity | 5-9 | 3-7 | 1-5 | 7-10 |
-| Depth | 6-10 | 3-7 | 7-10 | 4-8 |
-| Accountability | 5-9 | 2-6 | 1-5 | 7-10 |
+| Trait          | Mentor | Friend | Therapist | Coach |
+| -------------- | ------ | ------ | --------- | ----- |
+| Directness     | 5-9    | 2-6    | 1-5       | 6-10  |
+| Warmth         | 4-8    | 7-10   | 5-9       | 3-7   |
+| Proactivity    | 5-9    | 3-7    | 1-5       | 7-10  |
+| Depth          | 6-10   | 3-7    | 7-10      | 4-8   |
+| Accountability | 5-9    | 2-6    | 1-5       | 7-10  |
 
 Default values sit at the midpoint of each range (rounded).
 
@@ -66,6 +67,7 @@ Your core purpose: {archetype.corePurpose}
 This layer never changes. It's the bedrock of who the companion is.
 
 **Example (Mentor):**
+
 > You are Atlas, a Mentor companion.
 > Your core purpose: Guide, challenge, and inspire through wisdom and thoughtful questioning.
 
@@ -78,6 +80,7 @@ Your communication style: {archetype.voiceStyle}
 The voice style is determined by archetype and cannot be overridden by traits. This ensures a Mentor always sounds like a Mentor, regardless of how sliders are set.
 
 **Example (Friend):**
+
 > Your communication style: Casual and warm. Uses humor naturally. Validates before suggesting ("I hear you" before "have you considered"). Contractions, informal, supportive without saccharine.
 
 ### Layer 3: Behavioral Rules (Hard Constraints)
@@ -172,9 +175,13 @@ personaSchema.methods.getSystemPrompt = function (): string {
   const identity = `You are ${this.name}, a ${config.displayName}.\nYour core purpose: ${config.corePurpose}`;
   const voice = config.voiceStyle;
   const rules = [/* RULE 1..5… */].join('\n');
-  const context = 'Relevant context from earlier in this conversation is provided in the message history below.';
+  const context =
+    'Relevant context from earlier in this conversation is provided in the message history below.';
   const calibration = formatCalibration(this.traits, config);
-  const cop = ['Before responding, briefly consider:', '1. Would [your name] say this?…', /* … */].join('\n');
+  const cop = [
+    'Before responding, briefly consider:',
+    '1. Would [your name] say this?…' /* … */,
+  ].join('\n');
   return [identity, voice, rules, context, calibration, cop].join('\n\n');
 };
 ```
@@ -183,16 +190,13 @@ personaSchema.methods.getSystemPrompt = function (): string {
 
 On first login, `personaService.ensureDefaultPersona()` creates a single
 default "Friend" persona named **Sam** so the app can open straight into a
-chat. From there, `CreatePersonaPage` lets a user pick any of the 4
-archetypes (grouped by category in the avatar grid) to create additional
-personas — the archetype/trait machinery above is exercised end-to-end, not
-just reserved for later. Picking an avatar that already has a persona is a
-*selection*, not a creation: it skips the create-persona drawer entirely,
-activates that persona, and starts a new conversation directly
-(`CreatePersonaPage.tsx`'s `handleSelect`).
+chat. Persona creation is disabled for the current release; persisted records
+are not deleted. `SwitchPersonaPage` lists only the existing user-owned
+personas and calls the idempotent persona-open conversation endpoint, which
+resumes the latest chat or creates that persona's first chat exactly once.
 
 Every persona's archetype is surfaced wherever the persona itself is shown:
-as a label on each avatar in the create-persona picker, and in the chat
+as a label on each card in the persona selector, and in the chat
 header and message rows (`getArchetypeDisplayName()` in
 `client/src/utils/persona.ts`, falling back to a titlecased archetype name if
 `/api/personas/archetypes` hasn't loaded yet). Conversation list/detail

@@ -52,25 +52,25 @@ export const authRateLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-const requestKey = (req: Request): string =>
-  req.userId || req.ip || 'unknown';
+const requestKey = (req: Request): string => req.userId || req.ip || 'unknown';
 
-export const createApiRateLimiter = () => rateLimit({
-  windowMs: 10 * 1000, // 10 seconds
-  max: 10, // 10 requests per 10 seconds per user
-  keyGenerator: requestKey,
-  // Generation has its own authoritative 20/minute limiter below. Excluding
-  // it here means list/history/persona requests can never consume a message
-  // allowance or make the first generation request fail prematurely.
-  skip: (req: Request) =>
-    req.method === 'POST' && /^\/conversations\/[^/]+\/messages\/stream\/?$/.test(req.path),
-  message: {
-    success: false,
-    message: 'Too many requests. Please slow down.',
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
+export const createApiRateLimiter = () =>
+  rateLimit({
+    windowMs: 10 * 1000, // 10 seconds
+    max: 10, // 10 requests per 10 seconds per user
+    keyGenerator: requestKey,
+    // Generation has its own authoritative 20/minute limiter below. Excluding
+    // it here means list/history/persona requests can never consume a message
+    // allowance or make the first generation request fail prematurely.
+    skip: (req: Request) =>
+      req.method === 'POST' && /^\/conversations\/[^/]+\/messages\/stream\/?$/.test(req.path),
+    message: {
+      success: false,
+      message: 'Too many requests. Please slow down.',
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
 
 export const apiRateLimiter = createApiRateLimiter();
 
@@ -78,17 +78,18 @@ export const apiRateLimiter = createApiRateLimiter();
 // to (potentially several) upstream LLM calls against free-tier quotas, so a
 // single user hammering it can exhaust the shared Gemini/OpenRouter budget.
 // Keyed on the authenticated userId so one logged-in user can't burn it.
-export const createChatRateLimiter = () => rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 20, // 20 messages per minute per user
-  keyGenerator: requestKey,
-  message: {
-    success: false,
-    message: 'Too many messages. Please slow down.',
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
+export const createChatRateLimiter = () =>
+  rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 20, // 20 messages per minute per user
+    keyGenerator: requestKey,
+    message: {
+      success: false,
+      message: 'Too many messages. Please slow down.',
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
 
 export const chatRateLimiter = createChatRateLimiter();
 
@@ -103,6 +104,20 @@ export const ttsRateLimiter = rateLimit({
   message: {
     success: false,
     message: 'Too many voice requests. Please slow down.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Server transcription reaches a metered external API, so bound it separately
+// from ordinary app traffic as well as by upload bytes/duration in the route.
+export const transcriptionRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  keyGenerator: requestKey,
+  message: {
+    success: false,
+    message: 'Too many transcription requests. Please wait a minute and try again.',
   },
   standardHeaders: true,
   legacyHeaders: false,

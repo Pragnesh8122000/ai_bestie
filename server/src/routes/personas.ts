@@ -3,8 +3,8 @@ import { ZodError } from 'zod';
 import { Persona } from '../models/Persona';
 import { catchAsync, AppError } from '../utils/errors';
 import { requireAuth } from '../middleware/auth';
-import { getArchetypes, getArchetypeConfig } from '../services/personaService';
-import { createPersonaSchema, updatePersonaSchema } from '../validations/persona';
+import { getArchetypes } from '../services/personaService';
+import { updatePersonaSchema } from '../validations/persona';
 
 const router = Router();
 
@@ -40,57 +40,15 @@ router.get(
   }),
 );
 
-// POST /api/personas — create a new persona
-router.post(
-  '/',
-  catchAsync(async (req, res, next) => {
-    let input;
-    try {
-      input = createPersonaSchema.parse(req.body);
-    } catch (error) {
-      if (error instanceof ZodError) {
-        res.status(400).json({
-          success: false,
-          message: 'Validation error',
-          errors: error.errors.map((e) => ({ field: e.path.join('.'), message: e.message })),
-        });
-        return;
-      }
-      return next(error);
-    }
-
-    // Validate archetype
-    const config = getArchetypeConfig(input.archetype);
-    if (!config) {
-      throw new AppError('Invalid archetype', 400);
-    }
-
-    // Merge default traits with provided traits
-    const traits = { ...config.defaultTraits, ...input.traits };
-
-    const persona = await Persona.create({
-      userId: req.userId,
-      name: input.name,
-      archetype: input.archetype,
-      avatarId: input.avatarId,
-      traits,
-    });
-
-    res.status(201).json({
-      success: true,
-      data: {
-        persona: {
-          id: persona.id,
-          name: persona.name,
-          archetype: persona.archetype,
-          avatarId: persona.avatarId,
-          traits: persona.traits,
-          createdAt: persona.createdAt,
-        },
-      },
-    });
-  }),
-);
+// Persona creation is intentionally unavailable in this release. Existing
+// records stay intact and remain selectable/editable.
+router.post('/', (_req, res) => {
+  res.status(405).json({
+    success: false,
+    code: 'PERSONA_CREATION_DISABLED',
+    message: 'Persona creation is not available in this release. Choose an existing persona.',
+  });
+});
 
 // GET /api/personas/:id — get a single persona
 router.get(

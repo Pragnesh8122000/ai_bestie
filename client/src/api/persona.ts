@@ -45,31 +45,20 @@ interface ArchetypesResponse {
   };
 }
 
-export interface CreatePersonaInput {
-  name: string;
-  archetype: 'mentor' | 'friend' | 'therapist' | 'coach';
-  avatarId: string;
-  traits?: Partial<Record<'directness' | 'warmth' | 'proactivity' | 'depth' | 'accountability', number>>;
-}
-
 export interface UpdatePersonaInput {
   name?: string;
   avatarId?: string;
-  traits?: Partial<Record<'directness' | 'warmth' | 'proactivity' | 'depth' | 'accountability', number>>;
+  traits?: Partial<
+    Record<'directness' | 'warmth' | 'proactivity' | 'depth' | 'accountability', number>
+  >;
 }
 
 export const personaApi = {
-  getArchetypes: () =>
-    apiClient.get<ArchetypesResponse>('/personas/archetypes'),
+  getArchetypes: () => apiClient.get<ArchetypesResponse>('/personas/archetypes'),
 
-  list: () =>
-    apiClient.get<PersonasResponse>('/personas'),
+  list: () => apiClient.get<PersonasResponse>('/personas'),
 
-  get: (id: string) =>
-    apiClient.get<PersonaResponse>(`/personas/${id}`),
-
-  create: (data: CreatePersonaInput) =>
-    apiClient.post<PersonaResponse>('/personas', data),
+  get: (id: string) => apiClient.get<PersonaResponse>(`/personas/${id}`),
 
   update: (id: string, data: UpdatePersonaInput) =>
     apiClient.patch<PersonaResponse>(`/personas/${id}`, data),

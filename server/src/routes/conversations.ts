@@ -11,6 +11,7 @@ import {
   ensureDefaultConversation,
   renameConversation,
   archiveConversation,
+  openPersonaConversation,
 } from '../services/chatService';
 
 const router = Router();
@@ -33,6 +34,40 @@ router.get(
     const { conversations, hasMore } = await listConversations(req.userId!, { limit, before });
 
     res.json({ success: true, data: { conversations, hasMore } });
+  }),
+);
+
+// POST /api/conversations/persona/:personaId/open — switch to an existing
+// persona and return its latest chat, creating only its first chat if needed.
+router.post(
+  '/persona/:personaId/open',
+  catchAsync(async (req, res) => {
+    const personaId = objectIdSchema.safeParse(req.params.personaId);
+    if (!personaId.success) {
+      throw new AppError('Persona not found', 404);
+    }
+
+    const result = await openPersonaConversation(req.userId!, personaId.data);
+    if (!result?.conversation) {
+      throw new AppError('Persona not found', 404);
+    }
+
+    const { conversation, persona } = result;
+    res.json({
+      success: true,
+      data: {
+        conversation,
+        persona: {
+          id: persona._id.toString(),
+          name: persona.name,
+          archetype: persona.archetype,
+          avatarId: persona.avatarId,
+          traits: persona.traits,
+          createdAt: persona.createdAt,
+          updatedAt: persona.updatedAt,
+        },
+      },
+    });
   }),
 );
 
@@ -63,16 +98,19 @@ router.post(
   catchAsync(async (req, res) => {
     const schema = z.object({
       personaId: z.string().min(1),
-      avatarId: z.string().min(1),
+      avatarId: z.string().min(1).optional(),
       title: z.string().max(100).optional(),
     });
 
     const input = schema.parse(req.body);
 
+    const persona = await Persona.findOne({ _id: input.personaId, userId: req.userId });
+    if (!persona) throw new AppError('Persona not found', 404);
+
     const conversation = await createConversation(
       req.userId!,
-      input.personaId,
-      input.avatarId,
+      persona._id.toString(),
+      persona.avatarId,
       input.title,
     );
 
