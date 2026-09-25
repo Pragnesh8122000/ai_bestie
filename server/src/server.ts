@@ -1,7 +1,29 @@
 import app from './app';
 import { config } from './config';
-import { connectDatabase } from './config/database';
+import { connectDatabase, disconnectDatabase } from './config/database';
 import { initTts, ttsStatus } from './services/ttsService';
+
+let httpServer: ReturnType<typeof app.listen> | null = null;
+let shuttingDown = false;
+
+const shutdown = (signal: NodeJS.Signals) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`${signal} received. Shutting down cleanly…`);
+
+  const finish = async () => {
+    await disconnectDatabase().catch(() => {});
+    process.exit(0);
+  };
+
+  if (httpServer) httpServer.close(() => void finish());
+  else void finish();
+
+  setTimeout(() => process.exit(0), 5_000).unref();
+};
+
+process.once('SIGINT', () => shutdown('SIGINT'));
+process.once('SIGTERM', () => shutdown('SIGTERM'));
 
 const start = async () => {
   try {
@@ -12,7 +34,7 @@ const start = async () => {
       console.warn('   Paste either/both into /.env or /server/.env\n');
     } else {
       if (config.llm.geminiApiKey) {
-        console.log(`Gemini model (primary): ${config.llm.geminiModel} (reasoning off)`);
+        console.log(`Gemini model (primary): ${config.llm.geminiModel}`);
       } else {
         console.log('Gemini: no key — using OpenRouter as primary');
       }
@@ -22,7 +44,7 @@ const start = async () => {
     }
 
     await connectDatabase();
-    app.listen(config.port, () => {
+    httpServer = app.listen(config.port, () => {
       console.log(`Server running on port ${config.port} in ${config.nodeEnv} mode`);
       console.log(`Health check: http://localhost:${config.port}/api/health`);
     });
@@ -50,7 +72,8 @@ const start = async () => {
       console.log('TTS: disabled (TTS_ENABLED=false) — using browser speechSynthesis');
     }
   } catch (error) {
-    console.error('Failed to start server:', error);
+    const message = error instanceof Error ? error.message : 'Unknown startup error';
+    console.error(`Server startup failed: ${message}`);
     process.exit(1);
   }
 };

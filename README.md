@@ -1,8 +1,8 @@
 # AI Bestie
 
-> Your personalized AI companion — create avatars, converse, and learn.
+> Your personalized AI companion — switch personas, converse, and learn.
 
-AI Bestie is a full-stack web application where users create personalized AI companions with distinct personalities, interact via real-time chat, and carry context through the conversation via session memory (the last 20 messages) that makes conversations feel continuous and context-aware.
+AI Bestie is a full-stack web application where users switch among provisioned AI personas, interact via real-time text or immersive voice chat, and carry context through the conversation via session memory (the last 20 messages).
 
 ## ✨ Key Features
 
@@ -10,28 +10,28 @@ AI Bestie is a full-stack web application where users create personalized AI com
 - **5-Trait Personality Sliders** — Fine-tune directness, warmth, proactivity, depth, and accountability within archetype bounds
 - **Real-Time Streaming Chat** — Token-by-token SSE streaming with Gemini Flash (free tier, primary) falling back to OpenRouter (free models), avatar state animations (idle → thinking → speaking)
 - **Password + Google Sign-In** — Google Identity Services ID tokens are verified server-side, then reuse the same HTTP-only JWT session as password accounts
-- **Voice Conversation** — Mic input (browser Web Speech API) + spoken replies. Voice replies use a neural TTS (Kokoro, free + open-source, runs in-process) and automatically fall back to the browser speechSynthesis voice if the model isn't downloaded, so you can always talk to your character
+- **Voice Conversation** — Immersive orb-first chat with browser speech recognition and an optional authenticated OpenAI transcription fallback for Brave/unsupported browsers. Voice replies use neural TTS (Kokoro, free + open-source, in-process) and fall back to browser speech synthesis when needed.
 - **Session Memory** — Last 20 messages kept in the conversation for context
 - **5-Layer System Prompts** — Identity → Voice → Rules → Context → Calibration, with Chain-of-Persona self-check
 - **12 Avatar Options** — Placeholder SVG avatars (Friend/Mentor/Therapist/Coach)
 
 ## 🛠 Tech Stack
 
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| **Frontend** | React 19 + Vite | SPA with hot reload |
-| **Styling** | Tailwind CSS 4 | Utility-first responsive design |
-| **State** | Zustand 5 | Lightweight client state management |
-| **HTTP** | Axios | API client with credentials |
-| **Backend** | Express 5 | REST API + SSE streaming |
-| **Database** | MongoDB (local or Atlas free tier) | Document store |
-| **ODM** | Mongoose 8 | Schema validation, hooks, virtuals |
-| **Auth** | Passport.js + Google Identity Services + JWT | Password/Google login, HTTP-only cookie session (7-day expiry) |
-| **Validation** | Zod 3 | API input validation |
-| **LLM (Chat)** | Gemini Flash (free) → OpenRouter (free) | Streaming conversation, primary + fallback |
-| **Voice (STT)** | Web Speech API | Mic → text input |
-| **Voice (TTS)** | sherpa-onnx (Kokoro) → Web Speech fallback | Text → spoken replies (neural, in-process, free) |
-| **Security** | Helmet, CORS, Rate Limiting | Production hardening |
+| Layer           | Technology                                   | Purpose                                                        |
+| --------------- | -------------------------------------------- | -------------------------------------------------------------- |
+| **Frontend**    | React 19 + Vite                              | SPA with hot reload                                            |
+| **Styling**     | Tailwind CSS 4                               | Utility-first responsive design                                |
+| **State**       | Zustand 5                                    | Lightweight client state management                            |
+| **HTTP**        | Axios                                        | API client with credentials                                    |
+| **Backend**     | Express 5                                    | REST API + SSE streaming                                       |
+| **Database**    | MongoDB (local or Atlas free tier)           | Document store                                                 |
+| **ODM**         | Mongoose 8                                   | Schema validation, hooks, virtuals                             |
+| **Auth**        | Passport.js + Google Identity Services + JWT | Password/Google login, HTTP-only cookie session (7-day expiry) |
+| **Validation**  | Zod 3                                        | API input validation                                           |
+| **LLM (Chat)**  | Gemini Flash (free) → OpenRouter (free)      | Streaming conversation, primary + fallback                     |
+| **Voice (STT)** | Web Speech API → optional OpenAI transcription | Mic → text input; bounded Brave fallback                     |
+| **Voice (TTS)** | sherpa-onnx (Kokoro) → Web Speech fallback   | Text → spoken replies (neural, in-process, free)               |
+| **Security**    | Helmet, CORS, Rate Limiting                  | Production hardening                                           |
 
 ## 📁 Project Structure
 
@@ -55,7 +55,7 @@ ai-bestie/
 │   │   │   ├── LoginPage.tsx
 │   │   │   ├── RegisterPage.tsx
 │   │   │   ├── ChatPage.tsx
-│   │   │   ├── CreatePersonaPage.tsx # Gallery-first persona creation (avatar → optional rename → create)
+│   │   │   ├── SwitchPersonaPage.tsx # Existing-persona selector (creation disabled)
 │   │   │   └── GuestChatPage.tsx # Read-only preview for unauthenticated guests
 │   │   ├── stores/            # Zustand state stores
 │   │   │   ├── authStore.ts   # Auth state (user, login, logout)
@@ -132,7 +132,7 @@ ai-bestie/
 - **Gemini API key** (free tier at [aistudio.google.com](https://aistudio.google.com/apikey)) — primary chat model
 - **OpenRouter API key** (free tier works) — fallback chat provider
 
-> Note: `gemini-2.5-flash` was deprecated for new API keys (returns 404). The app uses `gemini-flash-latest` — Google's maintained alias that always points to the current free-tier Flash model.
+- **OpenAI API key is optional.** It is used only for the bounded server transcription fallback when immersive voice runs in Brave or another browser without working Web Speech recognition.
 - **npm** 10+
 
 ### 1. Clone & Install
@@ -170,11 +170,16 @@ VITE_GOOGLE_CLIENT_ID=1234567890-example.apps.googleusercontent.com
 
 # LLM — Gemini Flash is the PRIMARY chat model (free tier, get a key at https://aistudio.google.com/apikey)
 GEMINI_API_KEY=your-gemini-api-key
-GEMINI_MODEL=gemini-flash-latest
+GEMINI_MODEL=gemini-3.8-flash
+GEMINI_FALLBACK_MODELS=gemini-3.7-flash,gemini-3.5-flash-lite
 
 # LLM — OpenRouter is the FALLBACK provider (free, https://openrouter.ai/keys)
 OPENROUTER_API_KEY=your-openrouter-api-key
-OPENROUTER_MODEL=google/gemma-4-26b-a4b-it:free
+OPENROUTER_MODEL=google/gemma-4-31b-it:free
+
+# Optional Brave voice fallback (paid external processing)
+OPENAI_API_KEY=
+OPENAI_TRANSCRIPTION_MODEL=whisper-1
 ```
 
 ### 3. Start MongoDB
@@ -210,8 +215,8 @@ npm run dev:client   # Vite on :5173
 Navigate to **http://localhost:5173**
 
 1. Register a new account
-2. Create your first companion (pick an avatar, optionally rename it, then Create — archetype and traits are derived from the avatar)
-3. Start chatting!
+2. Choose **Switch persona** to open one of the existing personas attached to your account
+3. Start a text chat or open the orb-first **Voice chat** surface
 
 ## 🔑 Authentication Flow
 
@@ -328,7 +333,7 @@ If the model is absent or `TTS_ENABLED=false`, the `/api/tts` endpoint returns
 Sam speaks with exactly **one female voice** per session — the two engines are
 never mixed mid-reply:
 
-- **Server:** `TTS_SID` is validated against the *English female* Kokoro
+- **Server:** `TTS_SID` is validated against the _English female_ Kokoro
   speaker ids for the model version in use (v1.0: 0-10, 20-23; v0_19: 0-4, 7,
   8). A male, non-English, or invalid id falls back to the default (v1.0: `3` =
   af_heart) instead of silently changing the character's voice or language.
@@ -361,56 +366,60 @@ On a custom start command (e.g. Render), set `LD_LIBRARY_PATH` — see
 
 See [docs/persona-system.md](docs/persona-system.md) for the full 5-layer prompt architecture.
 
-| Archetype | Voice | Trait Range | Best For |
-|-----------|-------|-------------|----------|
-| **Mentor** | Wise, measured | Direct 5-9, Warm 4-8, Deep 6-10 | Growth, career advice |
-| **Friend** | Casual, warm | Warm 7-10, Direct 2-6, Depth 3-7 | Emotional support, fun |
-| **Therapist** | Reflective, gentle | Warm 5-9, Direct 1-5, Depth 7-10 | Self-exploration |
-| **Coach** | Direct, action-oriented | Direct 6-10, Proactive 7-10, Accountability 7-10 | Goals, habits |
+| Archetype     | Voice                   | Trait Range                                      | Best For               |
+| ------------- | ----------------------- | ------------------------------------------------ | ---------------------- |
+| **Mentor**    | Wise, measured          | Direct 5-9, Warm 4-8, Deep 6-10                  | Growth, career advice  |
+| **Friend**    | Casual, warm            | Warm 7-10, Direct 2-6, Depth 3-7                 | Emotional support, fun |
+| **Therapist** | Reflective, gentle      | Warm 5-9, Direct 1-5, Depth 7-10                 | Self-exploration       |
+| **Coach**     | Direct, action-oriented | Direct 6-10, Proactive 7-10, Accountability 7-10 | Goals, habits          |
 
 ## 🧪 Available Scripts
 
-| Script | Description |
-|--------|-------------|
-| `npm run dev` | Start server + client concurrently |
-| `npm run dev:server` | Start Express server (port 3001) |
-| `npm run dev:client` | Start Vite dev server (port 5173) |
-| `npm run build` | Build both server + client for production |
-| `npm run lint` | Lint both workspaces |
-| `npm run test` | Run tests in both workspaces |
-| `npm run seed` | Seed database with test data |
-| `npm run migrate:auth -w server` | Idempotently backfill auth providers and create the Google subject index |
-| `npm run download-tts-model -w server` | Download the Kokoro TTS model (~360 MB, one-time, gitignored) |
+| Script                                 | Description                                                              |
+| -------------------------------------- | ------------------------------------------------------------------------ |
+| `npm run dev`                          | Start server + client concurrently                                       |
+| `npm run dev:server`                   | Start Express server (port 3001)                                         |
+| `npm run dev:client`                   | Start Vite dev server (port 5173)                                        |
+| `npm run build`                        | Build both server + client for production                                |
+| `npm run lint`                         | Lint both workspaces                                                     |
+| `npm run test`                         | Run tests in both workspaces                                             |
+| `npm run seed`                         | Seed database with test data                                             |
+| `npm run migrate:auth -w server`       | Idempotently backfill auth providers and create the Google subject index |
+| `npm run download-tts-model -w server` | Download the Kokoro TTS model (~360 MB, one-time, gitignored)            |
 
 ## 📋 Environment Variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `PORT` | No | Server port (default: 3001) |
-| `NODE_ENV` | No | Environment (default: development) |
-| `MONGODB_URI` | Yes | MongoDB connection string |
-| `JWT_SECRET` | Yes | Secret for signing JWT tokens |
-| `JWT_EXPIRES_IN` | No | Token expiry (default: 7d) |
-| `GOOGLE_CLIENT_ID` | No | Public Google Web OAuth client ID used by the server as the ID-token audience. Must match the client value. |
-| `VITE_GOOGLE_CLIENT_ID` | No | The same public Web OAuth client ID, embedded into the Vite build for the GIS button. Not a secret. |
-| `GEMINI_API_KEY` | Yes* | Gemini key — primary chat provider |
-| `GEMINI_MODEL` | No | Gemini model id (default: `gemini-flash-latest`; `gemini-2.5-flash` is deprecated for new keys) |
-| `GEMINI_FALLBACK_MODELS` | No | Gemini models tried if the primary 429s (default: `gemini-2.0-flash,gemini-3.5-flash`) |
-| `OPENROUTER_API_KEY` | Yes* | OpenRouter key — fallback chat provider |
-| `OPENROUTER_MODEL` | No | OpenRouter model id (default: `google/gemma-4-26b-a4b-it:free`) |
-| `OPENROUTER_FALLBACK_MODELS` | No | OpenRouter models tried in order if the primary 429s |
-| `OPENAI_API_KEY` | No | Not used. The OpenAI Whisper API is a *paid* STT service with no permanent free tier, so it is intentionally not integrated; the browser Web Speech API is the free STT default. |
-| `TTS_ENABLED` | No | Enable neural TTS (default: `true`). If the model isn't downloaded, voice replies fall back to the browser voice. |
-| `TTS_MODEL_VERSION` | No | Kokoro release: `v1_0` (default, 53 speakers) or `v0_19` (legacy, English-only). Also selects the default model path and the valid `TTS_SID` range. |
-| `TTS_MODEL_PATH` | No | Path to the Kokoro model dir (default: `server/.tts-models/kokoro-multi-lang-v1_0`). Override only for a custom/int8 model. |
-| `TTS_SID` | No | Kokoro speaker id (v1.0 default: `3` = af_heart). English female ids: 0=af_alloy, 1=af_aoede, 2=af_bella, 3=af_heart, 5=af_kore, 6=af_nicole, 7=af_nova, 9=af_sarah, 20-23 = British. |
-| `TTS_SPEED` | No | Speaking rate (default: `0.95`, clamped to 0.7-1.3). Below 1.0 sounds more relaxed and less clipped. |
-| `TTS_MAX_CHARS` | No | Max characters per TTS request (default: 1000) |
-| `CLIENT_URL` | No | Frontend URL for CORS (default: http://localhost:5173) |
+| Variable                        | Required | Description                                                                                                                                                                           |
+| ------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                          | No       | Server port (default: 3001)                                                                                                                                                           |
+| `NODE_ENV`                      | No       | Environment (default: development)                                                                                                                                                    |
+| `MONGODB_URI`                   | Yes      | MongoDB connection string                                                                                                                                                             |
+| `JWT_SECRET`                    | Yes      | Secret for signing JWT tokens                                                                                                                                                         |
+| `JWT_EXPIRES_IN`                | No       | Token expiry (default: 7d)                                                                                                                                                            |
+| `GOOGLE_CLIENT_ID`              | No       | Public Google Web OAuth client ID used by the server as the ID-token audience. Must match the client value.                                                                           |
+| `VITE_GOOGLE_CLIENT_ID`         | No       | The same public Web OAuth client ID, embedded into the Vite build for the GIS button. Not a secret.                                                                                   |
+| `GEMINI_API_KEY`                | Yes*     | Gemini key — primary chat provider                                                                                                                                                    |
+| `GEMINI_MODEL`                  | No       | Gemini model id (default: `gemini-3.8-flash`)                                                                                                                                         |
+| `GEMINI_FALLBACK_MODELS`        | No       | Ordered, de-duplicated Gemini fallbacks (default: `gemini-3.7-flash,gemini-3.5-flash-lite`)                                                                                           |
+| `OPENROUTER_API_KEY`            | Yes*     | OpenRouter key — fallback chat provider                                                                                                                                               |
+| `OPENROUTER_MODEL`              | No       | OpenRouter model id (default: `google/gemma-4-31b-it:free`)                                                                                                                           |
+| `OPENROUTER_FALLBACK_MODELS`    | No       | Ordered, de-duplicated OpenRouter fallbacks (default: `qwen/qwen3.8-27b:free,nvidia/nemotron-3-ultra-550b-a55b:free`)                                                                 |
+| `OPENAI_API_KEY`                | No       | Enables the paid, bounded server transcription fallback for Brave/unsupported immersive voice; browser recognition remains the free first choice.                                     |
+| `OPENAI_TRANSCRIPTION_MODEL`    | No       | Transcription model (default: `whisper-1`)                                                                                                                                            |
+| `TRANSCRIPTION_MAX_DURATION_MS` | No       | Maximum declared voice clip duration (default: 12000)                                                                                                                                 |
+| `TRANSCRIPTION_MAX_BYTES`       | No       | Maximum raw audio upload bytes (default: 2097152)                                                                                                                                     |
+| `TTS_ENABLED`                   | No       | Enable neural TTS (default: `true`). If the model isn't downloaded, voice replies fall back to the browser voice.                                                                     |
+| `TTS_MODEL_VERSION`             | No       | Kokoro release: `v1_0` (default, 53 speakers) or `v0_19` (legacy, English-only). Also selects the default model path and the valid `TTS_SID` range.                                   |
+| `TTS_MODEL_PATH`                | No       | Path to the Kokoro model dir (default: `server/.tts-models/kokoro-multi-lang-v1_0`). Override only for a custom/int8 model.                                                           |
+| `TTS_SID`                       | No       | Kokoro speaker id (v1.0 default: `3` = af_heart). English female ids: 0=af_alloy, 1=af_aoede, 2=af_bella, 3=af_heart, 5=af_kore, 6=af_nicole, 7=af_nova, 9=af_sarah, 20-23 = British. |
+| `TTS_SPEED`                     | No       | Speaking rate (default: `0.95`, clamped to 0.7-1.3). Below 1.0 sounds more relaxed and less clipped.                                                                                  |
+| `TTS_MAX_CHARS`                 | No       | Max characters per TTS request (default: 1000)                                                                                                                                        |
+| `CLIENT_URL`                    | No       | Frontend URL for CORS (default: http://localhost:5173)                                                                                                                                |
 
 > *At least one of `GEMINI_API_KEY` or `OPENROUTER_API_KEY` is required for chat to work. Gemini is tried first; OpenRouter is the fallback.
 
 ## 📄 License
 
 Private — All rights reserved.# ai_bestie
+
 # ai_bestie

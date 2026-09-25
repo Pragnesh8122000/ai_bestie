@@ -12,6 +12,7 @@ vi.mock('../api/conversation', () => ({
     list: vi.fn(),
     get: vi.fn(),
     getDefault: vi.fn(),
+    openPersona: vi.fn(),
     create: vi.fn(),
     rename: vi.fn(),
     delete: vi.fn(),
@@ -58,7 +59,13 @@ const initialState = useChatStore.getState();
 beforeEach(() => {
   useChatStore.getState().abortStream();
   vi.clearAllMocks();
-  useChatStore.setState({ ...initialState, conversations: [], activeConversation: null, activeConversationId: null, error: null });
+  useChatStore.setState({
+    ...initialState,
+    conversations: [],
+    activeConversation: null,
+    activeConversationId: null,
+    error: null,
+  });
 });
 
 describe('sendMessage', () => {
@@ -80,7 +87,10 @@ describe('sendMessage', () => {
     await useChatStore.getState().sendMessage('Hello Sam');
 
     const state = useChatStore.getState();
-    expect(state.activeConversation?.messages.map((m) => m.content)).toEqual(['Hello Sam', 'Hey there.']);
+    expect(state.activeConversation?.messages.map((m) => m.content)).toEqual([
+      'Hello Sam',
+      'Hey there.',
+    ]);
     expect(state.isStreaming).toBe(false);
     expect(state.avatarState).toBe('idle');
     expect(state.conversations[0].lastMessagePreview).toBe('Hey there.');
@@ -95,7 +105,9 @@ describe('sendMessage', () => {
     });
     api.streamMessage.mockResolvedValue(sseResponse([{ type: 'done', messageId: 'm1' }]));
 
-    await useChatStore.getState().sendMessage('I need help planning a trip to Lisbon next month with family');
+    await useChatStore
+      .getState()
+      .sendMessage('I need help planning a trip to Lisbon next month with family');
 
     expect(useChatStore.getState().conversations[0].title).toBe(
       'I need help planning a trip to Lisbon next month…',
@@ -103,10 +115,17 @@ describe('sendMessage', () => {
   });
 
   it('does not retitle a conversation that already has messages', async () => {
-    const existing = { role: 'user' as const, content: 'earlier', timestamp: '2026-08-18T09:00:00.000Z' };
+    const existing = {
+      role: 'user' as const,
+      content: 'earlier',
+      timestamp: '2026-08-18T09:00:00.000Z',
+    };
     useChatStore.setState({
       conversations: [conversation('a', { title: 'Existing title', messageCount: 2 })],
-      activeConversation: { ...conversation('a', { title: 'Existing title' }), messages: [existing] },
+      activeConversation: {
+        ...conversation('a', { title: 'Existing title' }),
+        messages: [existing],
+      },
       activeConversationId: 'a',
     });
     api.streamMessage.mockResolvedValue(sseResponse([{ type: 'done', messageId: 'm2' }]));
@@ -119,7 +138,10 @@ describe('sendMessage', () => {
   it('does not overwrite a manually renamed title', async () => {
     useChatStore.setState({
       conversations: [conversation('a', { title: 'Lisbon', titleIsCustom: true })],
-      activeConversation: { ...conversation('a', { title: 'Lisbon', titleIsCustom: true }), messages: [] },
+      activeConversation: {
+        ...conversation('a', { title: 'Lisbon', titleIsCustom: true }),
+        messages: [],
+      },
       activeConversationId: 'a',
     });
     api.streamMessage.mockResolvedValue(sseResponse([{ type: 'done', messageId: 'm1' }]));
@@ -135,7 +157,12 @@ describe('sendMessage', () => {
       activeConversation: { ...conversation('a'), messages: [] },
       activeConversationId: 'a',
     });
-    api.streamMessage.mockResolvedValue(sseResponse([{ type: 'token', content: 'hi' }, { type: 'done', messageId: 'm1' }]));
+    api.streamMessage.mockResolvedValue(
+      sseResponse([
+        { type: 'token', content: 'hi' },
+        { type: 'done', messageId: 'm1' },
+      ]),
+    );
 
     const pending = useChatStore.getState().sendMessage('question');
     // Simulate the user landing on B before the stream finishes.
@@ -158,7 +185,9 @@ describe('sendMessage', () => {
       activeConversation: { ...conversation('a'), messages: [] },
       activeConversationId: 'a',
     });
-    api.streamMessage.mockResolvedValue(sseResponse([{ type: 'error', message: 'Reply timed out. Please try again.' }]));
+    api.streamMessage.mockResolvedValue(
+      sseResponse([{ type: 'error', message: 'Reply timed out. Please try again.' }]),
+    );
 
     await useChatStore.getState().sendMessage('hello');
 
@@ -174,7 +203,10 @@ describe('sendMessage', () => {
       activeConversationId: 'a',
     });
     api.streamMessage.mockImplementation(
-      () => new Promise((resolve) => { resolveRequest = resolve; }),
+      () =>
+        new Promise((resolve) => {
+          resolveRequest = resolve;
+        }),
     );
 
     const first = useChatStore.getState().sendMessage('only once');
@@ -213,7 +245,9 @@ describe('sendMessage', () => {
     await useChatStore.getState().switchConversation('b');
 
     streamController?.enqueue(
-      encoder.encode(`data: ${JSON.stringify({ type: 'error', message: 'stale stream error' })}\n\n`),
+      encoder.encode(
+        `data: ${JSON.stringify({ type: 'error', message: 'stale stream error' })}\n\n`,
+      ),
     );
     streamController?.close();
     await pending;

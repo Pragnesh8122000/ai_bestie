@@ -19,11 +19,13 @@ Cookie: token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
 **Unauthorized response:**
+
 ```json
 { "success": false, "message": "Authentication required" }
 ```
 
 **Rate limits:**
+
 - Auth routes: 5 requests per 10 minutes per IP
 - Non-generation API routes: 10 requests per 10 seconds per authenticated user, or per IP when unauthenticated
 - Chat generation: 20 requests per minute per authenticated user
@@ -41,6 +43,7 @@ by the chat limiter.
 Create a new account.
 
 **Request:**
+
 ```json
 {
   "name": "Jane Doe",
@@ -50,6 +53,7 @@ Create a new account.
 ```
 
 **Response (201):**
+
 ```json
 {
   "success": true,
@@ -65,6 +69,7 @@ Create a new account.
 ```
 
 **Error (409):**
+
 ```json
 {
   "success": false,
@@ -73,6 +78,7 @@ Create a new account.
 ```
 
 **Error (400) — Validation:**
+
 ```json
 {
   "success": false,
@@ -93,6 +99,7 @@ Sets `token` HTTP-only cookie on success.
 Authenticate an existing user.
 
 **Request:**
+
 ```json
 {
   "email": "jane@example.com",
@@ -101,6 +108,7 @@ Authenticate an existing user.
 ```
 
 **Response (200):**
+
 ```json
 {
   "success": true,
@@ -116,6 +124,7 @@ Authenticate an existing user.
 ```
 
 **Error (401):**
+
 ```json
 { "success": false, "message": "Invalid email or password" }
 ```
@@ -131,11 +140,13 @@ the local user. The server validates the token against `GOOGLE_CLIENT_ID`; it
 never accepts client-decoded claims.
 
 **Request:**
+
 ```json
 { "credential": "eyJhbGciOiJSUzI1NiIs..." }
 ```
 
 **Response (200):**
+
 ```json
 {
   "success": true,
@@ -156,13 +167,13 @@ collision is not auto-linked because Google may not be authoritative for its
 current ownership; the endpoint returns `409 ACCOUNT_LINK_REQUIRED` and the
 existing password account remains unchanged.
 
-| Status | Code | Meaning |
-|--------|------|---------|
-| 401 | `INVALID_GOOGLE_CREDENTIAL` | Token verification failed |
-| 401 | `UNVERIFIED_GOOGLE_EMAIL` | Token lacks a verified email or stable subject |
-| 409 | `ACCOUNT_LINK_REQUIRED` | Existing third-party email must use password login |
-| 409 | `GOOGLE_IDENTITY_CONFLICT` | Subject/email is already linked incompatibly |
-| 503 | `GOOGLE_AUTH_UNAVAILABLE` | Server client ID is not configured |
+| Status | Code                        | Meaning                                            |
+| ------ | --------------------------- | -------------------------------------------------- |
+| 401    | `INVALID_GOOGLE_CREDENTIAL` | Token verification failed                          |
+| 401    | `UNVERIFIED_GOOGLE_EMAIL`   | Token lacks a verified email or stable subject     |
+| 409    | `ACCOUNT_LINK_REQUIRED`     | Existing third-party email must use password login |
+| 409    | `GOOGLE_IDENTITY_CONFLICT`  | Subject/email is already linked incompatibly       |
+| 503    | `GOOGLE_AUTH_UNAVAILABLE`   | Server client ID is not configured                 |
 
 Sets the same `token` HTTP-only cookie as password login.
 
@@ -173,6 +184,7 @@ Sets the same `token` HTTP-only cookie as password login.
 Clear the authentication cookie.
 
 **Response (200):**
+
 ```json
 { "success": true, "message": "Logged out successfully" }
 ```
@@ -184,6 +196,7 @@ Clear the authentication cookie.
 Get the currently authenticated user.
 
 **Response (200):**
+
 ```json
 {
   "success": true,
@@ -208,11 +221,13 @@ Get the currently authenticated user.
 List all avatars, optionally filtered by category.
 
 **Query Parameters:**
-| Param | Type | Description |
-|-------|------|-------------|
+
+| Param      | Type   | Description                                      |
+| ---------- | ------ | ------------------------------------------------ |
 | `category` | string | Filter: `mentor`, `friend`, `therapist`, `coach` |
 
 **Response (200):**
+
 ```json
 {
   "success": true,
@@ -236,6 +251,7 @@ List all avatars, optionally filtered by category.
 Get a single avatar by ID.
 
 **Response (200):**
+
 ```json
 {
   "success": true,
@@ -251,6 +267,7 @@ Get a single avatar by ID.
 ```
 
 **Error (404):**
+
 ```json
 { "success": false, "message": "Avatar not found" }
 ```
@@ -266,6 +283,7 @@ All persona routes require authentication, except `GET /api/personas/archetypes`
 Get all available archetype configurations.
 
 **Response (200):**
+
 ```json
 {
   "success": true,
@@ -276,7 +294,13 @@ Get all available archetype configurations.
         "displayName": "The Mentor",
         "corePurpose": "Guide, challenge, and inspire through wisdom...",
         "voiceStyle": "Calm authority. Uses analogies...",
-        "defaultTraits": { "directness": 7, "warmth": 6, "proactivity": 7, "depth": 8, "accountability": 7 },
+        "defaultTraits": {
+          "directness": 7,
+          "warmth": 6,
+          "proactivity": 7,
+          "depth": 8,
+          "accountability": 7
+        },
         "traitRanges": {
           "directness": { "min": 5, "max": 9 },
           "warmth": { "min": 4, "max": 8 },
@@ -297,6 +321,7 @@ Get all available archetype configurations.
 List the authenticated user's personas.
 
 **Response (200):**
+
 ```json
 {
   "success": true,
@@ -307,7 +332,13 @@ List the authenticated user's personas.
         "name": "Atlas",
         "archetype": "mentor",
         "avatarId": "mentor-male-01",
-        "traits": { "directness": 7, "warmth": 6, "proactivity": 7, "depth": 8, "accountability": 7 },
+        "traits": {
+          "directness": 7,
+          "warmth": 6,
+          "proactivity": 7,
+          "depth": 8,
+          "accountability": 7
+        },
         "createdAt": "2024-01-15T10:30:00Z"
       }
     ]
@@ -319,40 +350,16 @@ List the authenticated user's personas.
 
 ### POST /api/personas
 
-Create a new persona.
+Persona creation is disabled for the current release. Existing persona records
+are preserved and remain available through the list/get/update routes.
 
-**Request:**
+**Response (405):**
+
 ```json
 {
-  "name": "Atlas",
-  "archetype": "mentor",
-  "avatarId": "mentor-male-01",
-  "traits": {
-    "directness": 8,
-    "warmth": 5,
-    "proactivity": 7,
-    "depth": 9,
-    "accountability": 7
-  }
-}
-```
-
-Traits outside the archetype's range are automatically clamped on save.
-
-**Response (201):**
-```json
-{
-  "success": true,
-  "data": {
-    "persona": {
-      "id": "64f2a3b4c5d6e7f8a9b0c1d2",
-      "name": "Atlas",
-      "archetype": "mentor",
-      "avatarId": "mentor-male-01",
-      "traits": { "directness": 8, "warmth": 5, "proactivity": 7, "depth": 9, "accountability": 7 },
-      "createdAt": "2024-01-15T10:30:00Z"
-    }
-  }
+  "success": false,
+  "code": "PERSONA_CREATION_DISABLED",
+  "message": "Persona creation is not available in this release. Choose an existing persona."
 }
 ```
 
@@ -363,6 +370,7 @@ Traits outside the archetype's range are automatically clamped on save.
 Get a single persona.
 
 **Response (200):**
+
 ```json
 {
   "success": true,
@@ -385,6 +393,7 @@ Get a single persona.
 Update a persona's name, avatar, or traits. Traits are clamped to archetype ranges.
 
 **Request:**
+
 ```json
 {
   "traits": { "directness": 9, "warmth": 3 }
@@ -400,6 +409,7 @@ Update a persona's name, avatar, or traits. Traits are clamped to archetype rang
 Delete a persona.
 
 **Response (200):**
+
 ```json
 { "success": true, "message": "Persona deleted" }
 ```
@@ -415,6 +425,7 @@ All conversation routes require authentication.
 List the authenticated user's conversations, sorted by most recent.
 
 **Response (200):**
+
 ```json
 {
   "success": true,
@@ -440,6 +451,7 @@ List the authenticated user's conversations, sorted by most recent.
 Create a new conversation.
 
 **Request:**
+
 ```json
 {
   "personaId": "64f2a3b4c5d6e7f8a9b0c1d2",
@@ -449,6 +461,7 @@ Create a new conversation.
 ```
 
 **Response (201):**
+
 ```json
 {
   "success": true,
@@ -466,11 +479,25 @@ Create a new conversation.
 
 ---
 
+### POST /api/conversations/persona/:personaId/open
+
+Switch to an existing user-owned persona. Returns that persona's most recently
+active non-archived conversation, or creates exactly one first conversation if
+none exists. It never creates or modifies a persona.
+
+**Response (200):** Same conversation/persona detail shape as
+`GET /api/conversations/:id`.
+
+**Error (404):** The persona does not exist or does not belong to the signed-in user.
+
+---
+
 ### GET /api/conversations/:id
 
 Get a conversation with all messages.
 
 **Response (200):**
+
 ```json
 {
   "success": true,
@@ -519,6 +546,7 @@ display the correct name and archetype after a hard refresh.
 Send a message and receive a streaming response via Server-Sent Events.
 
 **Request:**
+
 ```json
 {
   "message": "I'm thinking about changing careers"
@@ -528,6 +556,7 @@ Send a message and receive a streaming response via Server-Sent Events.
 **Response:** `Content-Type: text/event-stream`
 
 SSE events in order:
+
 ```
 data: {"type":"state","state":"thinking"}
 
@@ -545,9 +574,42 @@ data: {"type":"done","messageId":"msg_1705312265000"}
 ```
 
 **Error events:**
+
+`code` is only present for provider-chain failures (see
+`LlmProviderError` in `server/src/services/llmService.ts`); a timeout or
+unexpected error omits it.
+
 ```
-data: {"type":"error","message":"Failed to generate response"}
+data: {"type":"error","message":"AI providers are busy right now. Please try again in a minute.","code":"LLM_BUSY"}
+data: {"type":"error","message":"AI providers are temporarily unavailable. Please try again shortly.","code":"LLM_UNAVAILABLE"}
+data: {"type":"error","message":"AI service configuration needs attention. Please contact the app owner.","code":"LLM_CONFIGURATION"}
+data: {"type":"error","message":"Reply timed out. Please try again."}
 ```
+
+---
+
+## Voice Transcription
+
+### POST /api/transcriptions
+
+Authenticated fallback for browsers whose Web Speech backend is unavailable
+(notably Brave). Send the raw audio body with `Content-Type` set to a supported
+audio type and `X-Audio-Duration-Ms` set to the recorded duration.
+
+- Maximum default duration: 12 seconds
+- Maximum default body: 2 MiB
+- Supported: FLAC, MP3/MPEG, MP4/M4A, OGG, WAV, WebM
+- Requires `OPENAI_API_KEY`; audio is forwarded to OpenAI's transcription API
+  and can incur usage charges. AI Bestie does not log or persist the bytes.
+
+**Response (200):**
+
+```json
+{ "success": true, "data": { "text": "Hello bestie" } }
+```
+
+**Common errors:** `401` unauthenticated, `413` duration/body limit, `415`
+unsupported format, `429` busy/rate-limited, `503` fallback not configured.
 
 ---
 
@@ -556,11 +618,13 @@ data: {"type":"error","message":"Failed to generate response"}
 Delete a conversation.
 
 **Response (200):**
+
 ```json
 { "success": true, "message": "Conversation deleted" }
 ```
 
 **Error (404):**
+
 ```json
 { "success": false, "message": "Conversation not found" }
 ```
@@ -581,11 +645,13 @@ All errors follow this structure:
 }
 ```
 
-| Status | When |
-|--------|------|
-| 400 | Zod validation failure, Mongoose validation error |
-| 401 | Missing/invalid JWT, expired token |
-| 404 | Resource not found |
-| 409 | Duplicate email on register |
-| 429 | Rate limit exceeded |
-| 500 | Unexpected server error |
+| Status | When                                               |
+| ------ | -------------------------------------------------- |
+| 400    | Zod validation failure, Mongoose validation error  |
+| 401    | Missing/invalid JWT, expired token                 |
+| 404    | Resource not found                                 |
+| 409    | Duplicate email on register                        |
+| 413    | Voice clip duration/body exceeds configured bounds |
+| 415    | Unsupported voice audio format                     |
+| 429    | Rate limit exceeded                                |
+| 500    | Unexpected server error                            |

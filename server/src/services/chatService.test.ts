@@ -1,14 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { deriveTitle, ensureDefaultConversation } from './chatService';
+import { deriveTitle, ensureDefaultConversation, openPersonaConversation } from './chatService';
 import { toPreview, PREVIEW_MAX_LENGTH } from '../models/Conversation';
 import { Conversation } from '../models/Conversation';
 import { Persona } from '../models/Persona';
 import { ensureDefaultPersona } from './personaService';
 
 vi.mock('../models/Conversation', async () => {
-  const actual = await vi.importActual<typeof import('../models/Conversation')>(
-    '../models/Conversation',
-  );
+  const actual =
+    await vi.importActual<typeof import('../models/Conversation')>('../models/Conversation');
   return {
     ...actual,
     Conversation: {
@@ -22,6 +21,7 @@ vi.mock('../models/Conversation', async () => {
 vi.mock('../models/Persona', () => ({
   Persona: {
     findById: vi.fn(),
+    findOne: vi.fn(),
   },
 }));
 
@@ -159,5 +159,92 @@ describe('ensureDefaultConversation', () => {
 
     expect(Persona.findById).not.toHaveBeenCalled();
     expect(result.persona).toBe(defaultPersona);
+  });
+});
+
+describe('openPersonaConversation', () => {
+  const fakeId = (hex: string) => ({
+    toHexString: () => hex,
+    toString: () => hex,
+  });
+  const persona = {
+    _id: fakeId('507f1f77bcf86cd799439011'),
+    userId: fakeId('507f1f77bcf86cd799439012'),
+    name: 'Riley',
+    archetype: 'coach',
+    avatarId: 'coach-female-01',
+    traits: {},
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(Persona.findOne).mockReturnValue({
+      lean: () => Promise.resolve(persona),
+    } as any);
+  });
+
+  it('opens the latest existing chat without creating a duplicate', async () => {
+    const existing = {
+      _id: fakeId('507f1f77bcf86cd799439013'),
+      userId: persona.userId,
+      personaId: persona._id,
+      avatarId: persona.avatarId,
+      messages: [],
+    };
+    vi.mocked(Conversation.findOne).mockReturnValue({
+      sort: () => ({ lean: () => Promise.resolve(existing) }),
+    } as any);
+
+    const result = await openPersonaConversation(
+      '507f1f77bcf86cd799439012',
+      persona._id.toString(),
+    );
+
+    expect(result?.conversation.id).toBe('507f1f77bcf86cd799439013');
+    expect(result?.persona).toBe(persona);
+    expect(Conversation.create).not.toHaveBeenCalled();
+  });
+
+  it('creates exactly one first chat when the persona has no conversation', async () => {
+    const created = {
+      _id: fakeId('507f1f77bcf86cd799439014'),
+      userId: persona.userId,
+      personaId: persona._id,
+      avatarId: persona.avatarId,
+      messages: [],
+    };
+    vi.mocked(Conversation.findOne).mockReturnValue({
+      sort: () => ({ lean: () => Promise.resolve(null) }),
+    } as any);
+    vi.mocked(Conversation.create).mockResolvedValue(created as any);
+    vi.mocked(Conversation.findById).mockReturnValue({
+      lean: () => Promise.resolve(created),
+    } as any);
+
+    const result = await openPersonaConversation(
+      '507f1f77bcf86cd799439012',
+      persona._id.toString(),
+    );
+
+    expect(result?.conversation.id).toBe('507f1f77bcf86cd799439014');
+    expect(Conversation.create).toHaveBeenCalledTimes(1);
+    expect(Conversation.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        personaId: persona._id.toString(),
+        avatarId: persona.avatarId,
+      }),
+    );
+  });
+
+  it('does not open or create a chat for a persona the user does not own', async () => {
+    vi.mocked(Persona.findOne).mockReturnValue({
+      lean: () => Promise.resolve(null),
+    } as any);
+
+    await expect(
+      openPersonaConversation('507f1f77bcf86cd799439012', persona._id.toString()),
+    ).resolves.toBeNull();
+    expect(Conversation.findOne).not.toHaveBeenCalled();
+    expect(Conversation.create).not.toHaveBeenCalled();
   });
 });

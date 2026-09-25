@@ -39,8 +39,18 @@ if (cmd.length === 0) {
   process.exit(2);
 }
 
-const child = spawn(cmd[0], cmd.slice(1), { stdio: 'inherit', env, shell: true });
+const child = spawn(cmd[0], cmd.slice(1), { stdio: 'inherit', env, shell: false });
+let interrupted = false;
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.once(signal, () => {
+    interrupted = true;
+    child.kill(signal);
+  });
+}
 child.on('exit', (code, signal) => {
-  if (signal) process.kill(process.pid, signal);
+  // SIGINT/SIGTERM delivered by the root dev runner is a normal user stop,
+  // not an application crash. The server itself logs its clean shutdown.
+  if (signal && interrupted) process.exit(0);
+  else if (signal) process.kill(process.pid, signal);
   else process.exit(code ?? 0);
 });

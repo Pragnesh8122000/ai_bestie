@@ -11,6 +11,7 @@ import avatarRoutes from './routes/avatars';
 import personaRoutes from './routes/personas';
 import conversationRoutes from './routes/conversations';
 import ttsRoutes from './routes/tts';
+import transcriptionRoutes from './routes/transcriptions';
 import { apiRateLimiter } from './middleware/auth';
 
 // Initialize Passport strategies
@@ -43,10 +44,12 @@ app.use(
     crossOriginEmbedderPolicy: false,
   }),
 );
-app.use(cors({
-  origin: config.client.url,
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: config.client.url,
+    credentials: true,
+  }),
+);
 app.use(express.json({ limit: '10kb' }));
 app.use(cookieParser());
 app.use(passport.initialize());
@@ -66,6 +69,7 @@ app.get('/api/health', (_req, res) => {
 // is several sentences in quick succession and would blow the 10/10s global
 // ceiling. Only ttsRateLimiter (mounted inside the router) applies.
 app.use('/api/tts', ttsRoutes);
+app.use('/api/transcriptions', transcriptionRoutes);
 
 // Generic limiter for /api routes. Generation is explicitly skipped and has
 // one authoritative per-user limiter inside the conversation router.

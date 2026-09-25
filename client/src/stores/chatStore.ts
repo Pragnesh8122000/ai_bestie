@@ -1,11 +1,6 @@
 import { create } from 'zustand';
 import { conversationApi, Conversation, Message } from '../api/conversation';
-import {
-  speakChunk,
-  beginSpeech,
-  stopSpeaking,
-  setTtsStateListener,
-} from '../utils/speech';
+import { speakChunk, beginSpeech, stopSpeaking, setTtsStateListener } from '../utils/speech';
 import { deriveTitle, toPreview, DEFAULT_TITLE } from '../utils/conversation';
 import { takeSpeech } from '../utils/speechText';
 import { usePersonaStore } from './personaStore';
@@ -32,6 +27,7 @@ interface ChatState {
   openDefaultConversation: () => Promise<void>;
   switchConversation: (id: string) => Promise<void>;
   createConversation: (personaId: string, avatarId: string, title?: string) => Promise<string>;
+  openPersonaConversation: (personaId: string) => Promise<string | null>;
   startNewConversation: () => Promise<string | null>;
   renameConversation: (id: string, title: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
@@ -40,6 +36,7 @@ interface ChatState {
   abortStream: () => void;
   clearError: () => void;
   toggleTts: () => void;
+  setTtsEnabled: (enabled: boolean) => void;
 }
 
 // Per-stream controller + watchdog. Held at module scope so the store actions
@@ -108,7 +105,8 @@ export const useChatStore = create<ChatState>((set, getState) => ({
       const { conversations: page, hasMore } = response.data.data;
 
       set((state) => {
-        if (!append) return { conversations: page, hasMoreConversations: hasMore, isLoadingList: false };
+        if (!append)
+          return { conversations: page, hasMoreConversations: hasMore, isLoadingList: false };
         // De-dupe on id: a conversation bumped between pages can appear twice.
         const seen = new Set(state.conversations.map((c) => c.id));
         const merged = [...state.conversations, ...page.filter((c) => !seen.has(c.id))];
@@ -213,15 +211,48 @@ export const useChatStore = create<ChatState>((set, getState) => ({
     }
   },
 
+  openPersonaConversation: async (personaId: string) => {
+    getState().abortStream();
+    const myLoadId = ++loadId;
+    set({ isLoadingConversation: true, error: null });
+
+    try {
+      const response = await conversationApi.openPersona(personaId);
+      if (myLoadId !== loadId) return null;
+      const { conversation, persona } = response.data.data;
+      usePersonaStore.getState().upsertPersona(persona);
+      usePersonaStore.getState().setActivePersona(persona.id);
+      set((state) => ({
+        activeConversation: conversation,
+        activeConversationId: conversation.id,
+        isLoadingConversation: false,
+        isSidebarOpen: false,
+        conversations: sortByRecency([
+          conversation,
+          ...state.conversations.filter((item) => item.id !== conversation.id),
+        ]),
+      }));
+      return conversation.id;
+    } catch (error: any) {
+      if (myLoadId !== loadId) return null;
+      set({
+        error: errorMessage(error, 'Could not switch persona. Please try again.'),
+        isLoadingConversation: false,
+      });
+      return null;
+    }
+  },
+
   /**
    * Create an empty conversation with the current persona and open it.
    * No GET round-trip — a freshly created conversation is known to be empty.
    */
   startNewConversation: async () => {
-    let persona = usePersonaStore
-      .getState()
-      .personas.find((p) => p.id === usePersonaStore.getState().activePersonaId)
-      ?? usePersonaStore.getState().personas[0];
+    let persona =
+      usePersonaStore
+        .getState()
+        .personas.find((p) => p.id === usePersonaStore.getState().activePersonaId) ??
+      usePersonaStore.getState().personas[0];
 
     // Cold load (hard refresh straight onto a "new chat" click) — seed a persona.
     if (!persona) {
@@ -618,6 +649,11 @@ export const useChatStore = create<ChatState>((set, getState) => ({
       if (!next) stopSpeaking();
       return { ttsEnabled: next };
     });
+  },
+
+  setTtsEnabled: (enabled: boolean) => {
+    if (!enabled) stopSpeaking();
+    set({ ttsEnabled: enabled });
   },
 }));
 

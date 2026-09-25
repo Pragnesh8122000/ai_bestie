@@ -33,6 +33,32 @@ interface Provider {
   extraHeaders?: Record<string, string>;
 }
 
+type FailureKind =
+  'rate-limit' | 'overloaded' | 'model-unavailable' | 'auth' | 'network' | 'upstream';
+
+interface AttemptFailure {
+  provider: string;
+  model: string;
+  status: number;
+  kind: FailureKind;
+}
+
+export class LlmProviderError extends Error {
+  readonly code: 'LLM_BUSY' | 'LLM_CONFIGURATION' | 'LLM_UNAVAILABLE';
+  readonly internalSummary: string;
+
+  constructor(
+    code: 'LLM_BUSY' | 'LLM_CONFIGURATION' | 'LLM_UNAVAILABLE',
+    message: string,
+    internalSummary: string,
+  ) {
+    super(message);
+    this.name = 'LlmProviderError';
+    this.code = code;
+    this.internalSummary = internalSummary;
+  }
+}
+
 const RETRIES_PER_MODEL = 2;
 // In-process rate-limit cooldown (free, no shared state). Maps a
 // "provider/model" key to the epoch-ms when it may be retried. Lets us skip
@@ -63,10 +89,10 @@ function buildProviders(): Provider[] {
       name: 'gemini',
       url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
       apiKey: config.llm.geminiApiKey,
-      models: [config.llm.geminiModel, ...config.llm.geminiFallbackModels],
-      // Gemini 2.5/Flash are "thinking" models — without this they spend the token
-      // budget on internal reasoning and the first visible token is delayed. "none"
-      // gives direct, fast replies (ideal for simple chat).
+      models: uniqueModels([config.llm.geminiModel, ...config.llm.geminiFallbackModels]),
+      // Gemini 2.5/Flash are "thinking" models — without this they spend the
+      // token budget on internal reasoning and the first visible token is
+      // delayed. "none" gives direct, fast replies (ideal for simple chat).
       extraBody: { reasoning_effort: 'none' },
     });
   }
@@ -76,7 +102,7 @@ function buildProviders(): Provider[] {
       name: 'openrouter',
       url: 'https://openrouter.ai/api/v1/chat/completions',
       apiKey: config.llm.openrouterApiKey,
-      models: [config.llm.openrouterModel, ...config.llm.openrouterFallbackModels],
+      models: uniqueModels([config.llm.openrouterModel, ...config.llm.openrouterFallbackModels]),
       // OpenRouter requests attribution headers for free-model routing/ranking.
       extraHeaders: {
         'HTTP-Referer': config.client.url,
@@ -88,6 +114,80 @@ function buildProviders(): Provider[] {
   return providers;
 }
 
+function uniqueModels(models: readonly string[]): string[] {
+  return [...new Set(models.map((model) => model.trim()).filter(Boolean))];
+}
+
+function classifyFailure(status: number, body: string): FailureKind {
+  if (status === 401 || status === 403) return 'auth';
+  if (status === 429) return 'rate-limit';
+  if (status === 404 || status === 400 || status === 422) return 'model-unavailable';
+  if (status === 0) return 'network';
+
+  const normalized = body.toLowerCase();
+  if (
+    status === 503 ||
+    normalized.includes('overload') ||
+    normalized.includes('high demand') ||
+    normalized.includes('no endpoints found')
+  ) {
+    return 'overloaded';
+  }
+  return 'upstream';
+}
+
+function retryAfterMs(response: Response): number {
+  const value = response.headers.get('retry-after');
+  if (!value) return DEFAULT_COOLDOWN_MS;
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) {
+    return Math.min(Math.max(seconds, 5), MAX_COOLDOWN_MS / 1000) * 1000;
+  }
+
+  const date = Date.parse(value);
+  if (Number.isNaN(date)) return DEFAULT_COOLDOWN_MS;
+  return Math.min(Math.max(date - Date.now(), 5_000), MAX_COOLDOWN_MS);
+}
+
+function providerError(failures: AttemptFailure[]): LlmProviderError {
+  const counts = failures.reduce<Record<string, number>>((summary, failure) => {
+    summary[failure.kind] = (summary[failure.kind] ?? 0) + 1;
+    return summary;
+  }, {});
+  const attempts = failures
+    .map(
+      ({ provider, model, status, kind }) => `${provider}/${model}=${status || 'network'}:${kind}`,
+    )
+    .join(', ');
+  const internalSummary = `${Object.entries(counts)
+    .map(([kind, count]) => `${kind}:${count}`)
+    .join(' ')}; attempts: ${attempts}`;
+
+  if (failures.length > 0 && failures.every((failure) => failure.kind === 'auth')) {
+    return new LlmProviderError(
+      'LLM_CONFIGURATION',
+      'AI service configuration needs attention. Please contact the app owner.',
+      internalSummary,
+    );
+  }
+  if (
+    failures.length > 0 &&
+    failures.every((failure) => failure.kind === 'rate-limit' || failure.kind === 'overloaded')
+  ) {
+    return new LlmProviderError(
+      'LLM_BUSY',
+      'AI providers are busy right now. Please try again in a minute.',
+      internalSummary,
+    );
+  }
+  return new LlmProviderError(
+    'LLM_UNAVAILABLE',
+    'AI providers are temporarily unavailable. Please try again shortly.',
+    internalSummary,
+  );
+}
+
 async function openStream(
   url: string,
   apiKey: string,
@@ -96,23 +196,34 @@ async function openStream(
   extraBody?: Record<string, unknown>,
   extraHeaders?: Record<string, string>,
   signal?: AbortSignal,
-): Promise<{ response: Response; ok: boolean; error: string; status: number }> {
+): Promise<{ response: Response | null; ok: boolean; error: string; status: number }> {
   let response: Response | null = null;
   let lastError = '';
   let lastStatus = 0;
 
   for (let attempt = 0; attempt < RETRIES_PER_MODEL; attempt++) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-        ...(extraHeaders || {}),
-      },
-      body: JSON.stringify({ ...payload, ...extraBody, model }),
-      signal,
-    });
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+          ...(extraHeaders || {}),
+        },
+        body: JSON.stringify({ ...payload, ...extraBody, model }),
+        signal,
+      });
+    } catch (error) {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      lastStatus = 0;
+      lastError = error instanceof Error ? error.message : 'network error';
+      if (attempt === RETRIES_PER_MODEL - 1) {
+        return { response: null, ok: false, error: lastError, status: 0 };
+      }
+      await sleep(1000 * (attempt + 1), signal);
+      continue;
+    }
 
     if (response.ok && response.body) {
       return { response, ok: true, error: '', status: response.status };
@@ -122,16 +233,16 @@ async function openStream(
     lastError = await response.text().catch(() => '');
     const retryable = response.status === 429 || response.status >= 500;
     if (!retryable || attempt === RETRIES_PER_MODEL - 1) {
-      return { response: response!, ok: false, error: lastError, status: lastStatus };
+      return { response, ok: false, error: lastError, status: lastStatus };
     }
     try {
       await sleep(1000 * (attempt + 1), signal);
     } catch {
-      return { response: response!, ok: false, error: lastError, status: lastStatus };
+      return { response, ok: false, error: lastError, status: lastStatus };
     }
   }
 
-  return { response: response!, ok: false, error: lastError, status: lastStatus };
+  return { response, ok: false, error: lastError, status: lastStatus };
 }
 
 /**
@@ -151,22 +262,17 @@ export async function streamChat(options: StreamOptions): Promise<string> {
   const payload = {
     stream: true,
     max_tokens: maxTokens,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      ...messages,
-    ],
+    messages: [{ role: 'system', content: systemPrompt }, ...messages],
   };
 
-  const errors: string[] = [];
-  let rateLimited = 0;
+  const failures: AttemptFailure[] = [];
   for (const provider of providers) {
     for (const model of provider.models) {
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       const key = `${provider.name}/${model}`;
       const cooldown = cooldownUntil.get(key);
       if (cooldown && cooldown > Date.now()) {
-        rateLimited++;
-        errors.push(`${key}: cooling down (rate-limited)`);
+        failures.push({ provider: provider.name, model, status: 429, kind: 'rate-limit' });
         continue;
       }
       const { response, ok, error, status } = await openStream(
@@ -178,19 +284,16 @@ export async function streamChat(options: StreamOptions): Promise<string> {
         provider.extraHeaders,
         signal,
       );
-      if (ok) {
+      if (ok && response) {
         return consumeStream(response, onToken, onEnd, signal);
       }
-      errors.push(`${key}: ${status} ${error.slice(0, 160)}`);
+      const kind = classifyFailure(status, error);
+      failures.push({ provider: provider.name, model, status, kind });
       if (status === 429) {
-        rateLimited++;
-        const retryAfter = response.headers.get('retry-after');
-        let ms = DEFAULT_COOLDOWN_MS;
-        if (retryAfter) {
-          const secs = parseInt(retryAfter, 10);
-          if (!Number.isNaN(secs)) ms = Math.min(Math.max(secs, 5), MAX_COOLDOWN_MS / 1000) * 1000;
-        }
-        cooldownUntil.set(key, Date.now() + ms);
+        cooldownUntil.set(
+          key,
+          Date.now() + (response ? retryAfterMs(response) : DEFAULT_COOLDOWN_MS),
+        );
       }
       // Only auth errors are truly provider-wide. A 400/404 is usually
       // model-specific (bad model id / unsupported param) — continue to the
@@ -201,12 +304,7 @@ export async function streamChat(options: StreamOptions): Promise<string> {
     }
   }
 
-  // If every attempt was a rate-limit (or cooldown skip), the shared free-tier
-  // quota is exhausted — surface that distinctly so the caller can tell.
-  if (rateLimited === errors.length && errors.length > 0) {
-    throw new Error(`All LLM providers rate-limited. ${errors.join(' | ')}`);
-  }
-  throw new Error(`All LLM providers failed. ${errors.join(' | ')}`);
+  throw providerError(failures);
 }
 
 async function consumeStream(

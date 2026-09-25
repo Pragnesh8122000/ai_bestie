@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useChatStore } from '../stores/chatStore';
@@ -8,6 +8,7 @@ import ChatInput from '../components/ChatInput';
 import ConversationList from '../components/ConversationList';
 import VoiceOrb from '../components/VoiceOrb';
 import VoiceModeControl from '../components/VoiceModeControl';
+import ImmersiveVoiceMode from '../components/ImmersiveVoiceMode';
 
 const DESKTOP_QUERY = '(min-width: 640px)';
 
@@ -27,6 +28,7 @@ export default function ChatPage() {
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const defaultBootstrapAttempted = useRef(false);
+  const [isVoiceMode, setIsVoiceMode] = useState(false);
 
   // Only auto-open if there's no conversation yet (avoids refetch + the
   // "connecting" flash on every route-away-and-back).
@@ -93,6 +95,15 @@ export default function ChatPage() {
 
   const initial = (user?.name || 'T').charAt(0).toUpperCase();
 
+  const startVoiceMode = () => {
+    setSidebarOpen(false);
+    setIsVoiceMode(true);
+  };
+
+  if (isVoiceMode) {
+    return <ImmersiveVoiceMode onExit={() => setIsVoiceMode(false)} />;
+  }
+
   return (
     <div className="flex h-screen bg-ink">
       {/* Sidebar */}
@@ -107,14 +118,14 @@ export default function ChatPage() {
         <div className="flex flex-col gap-3 border-t border-line/60 px-4 py-4">
           <button
             type="button"
-            onClick={() => navigate('/create-persona')}
+            onClick={() => navigate('/switch-persona')}
             className="flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-line/60 px-4 py-3 font-sans text-sm font-medium text-linen transition-colors duration-150 hover:border-ember hover:text-ember active:scale-[0.98]"
           >
             <PeopleIcon />
-            New companion
+            Switch persona
           </button>
 
-          <VoiceModeControl />
+          <VoiceModeControl onStart={startVoiceMode} />
 
           <div className="flex items-center gap-3 rounded-2xl border border-line/60 px-3 py-2.5">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-ember to-ember-dim font-sans text-sm font-semibold text-ink">
@@ -156,7 +167,9 @@ export default function ChatPage() {
               <div className="flex items-center justify-between px-4 py-4">
                 <div className="flex items-center gap-2.5">
                   <VoiceOrb state="idle" size={24} />
-                  <span className="font-display text-base tracking-tight text-linen">AI Bestie</span>
+                  <span className="font-display text-base tracking-tight text-linen">
+                    AI Bestie
+                  </span>
                 </div>
                 <button
                   type="button"
@@ -176,14 +189,14 @@ export default function ChatPage() {
                   type="button"
                   onClick={() => {
                     setSidebarOpen(false);
-                    navigate('/create-persona');
+                    navigate('/switch-persona');
                   }}
                   className="flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-line/60 px-4 py-3 font-sans text-sm font-medium text-linen transition-colors duration-150 hover:border-ember hover:text-ember active:scale-[0.98]"
                 >
                   <PeopleIcon />
-                  New companion
+                  Switch persona
                 </button>
-                <VoiceModeControl />
+                <VoiceModeControl onStart={startVoiceMode} />
               </div>
 
               <div className="flex items-center gap-3 border-t border-line/60 px-4 py-3">
@@ -191,7 +204,9 @@ export default function ChatPage() {
                   {initial}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-sans text-sm text-linen">{user?.name || 'Test User'}</p>
+                  <p className="truncate font-sans text-sm text-linen">
+                    {user?.name || 'Test User'}
+                  </p>
                   <p className="truncate font-mono text-[10px] text-linen-dim">{user?.email}</p>
                 </div>
               </div>
@@ -220,13 +235,13 @@ export default function ChatPage() {
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
-            <VoiceModeControl compact />
+            <VoiceModeControl compact onStart={startVoiceMode} />
 
             <button
               type="button"
-              onClick={() => navigate('/create-persona')}
-              title="New companion"
-              aria-label="New companion"
+              onClick={() => navigate('/switch-persona')}
+              title="Switch persona"
+              aria-label="Switch persona"
               className="flex h-10 w-10 items-center justify-center rounded-full border border-line text-linen-dim transition-colors duration-150 hover:border-ember hover:text-ember"
             >
               <PeopleIcon />
@@ -278,7 +293,17 @@ export default function ChatPage() {
 
 function PeopleIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
       <circle cx="9" cy="7" r="4" />
       <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
@@ -289,7 +314,16 @@ function PeopleIcon() {
 
 function MenuIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true">
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
       <line x1="4" y1="7" x2="20" y2="7" />
       <line x1="4" y1="12" x2="20" y2="12" />
       <line x1="4" y1="17" x2="20" y2="17" />
@@ -299,7 +333,16 @@ function MenuIcon() {
 
 function CloseIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true">
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
       <line x1="6" y1="6" x2="18" y2="18" />
       <line x1="18" y1="6" x2="6" y2="18" />
     </svg>

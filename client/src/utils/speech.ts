@@ -53,17 +53,21 @@ export function isSTTSupported(): boolean {
 // Server-side neural TTS works on any browser that can fetch+play audio; the
 // browser speechSynthesis fallback is a bonus, not a requirement.
 export function isTTSSupported(): boolean {
-  return typeof window !== 'undefined' && (typeof fetch !== 'undefined' || 'speechSynthesis' in window);
+  return (
+    typeof window !== 'undefined' && (typeof fetch !== 'undefined' || 'speechSynthesis' in window)
+  );
 }
 
 /* ------------------------------- TTS ------------------------------- */
 
 type TtsStateListener = (speaking: boolean) => void;
+type TtsLevelListener = (level: number) => void;
 type QueueItem =
   | { kind: 'remote'; audio: HTMLAudioElement; url: string }
   | { kind: 'local'; utt: SpeechSynthesisUtterance };
 
 let stateListener: TtsStateListener | null = null;
+let levelListener: TtsLevelListener | null = null;
 let preferredVoice: SpeechSynthesisVoice | null = null;
 // Set once the browser voice has actually been used, after which the choice is
 // frozen (see loadVoice) so a late `onvoiceschanged` can't swap voices.
@@ -87,14 +91,67 @@ let pumping = false;
 let speaking = false; // an item is currently playing (drives notifyState(true))
 let currentAudio: HTMLAudioElement | null = null;
 let currentAudioUrl: string | null = null;
+let stopPlaybackMeter: (() => void) | null = null;
 
 /** Register a listener that fires when audio actually starts/stops. */
 export function setTtsStateListener(fn: TtsStateListener | null): void {
   stateListener = fn;
 }
 
+/** Register a listener for normalized neural-playback amplitude (0..1). */
+export function setTtsLevelListener(fn: TtsLevelListener | null): void {
+  levelListener = fn;
+  if (!fn) stopPlaybackMeter?.();
+}
+
 function notifyState(speaking: boolean): void {
   stateListener?.(speaking);
+}
+
+function startPlaybackLevelMeter(audio: HTMLAudioElement): void {
+  stopPlaybackMeter?.();
+  const AudioContextCtor =
+    typeof window === 'undefined'
+      ? undefined
+      : window.AudioContext ||
+        (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextCtor || !levelListener) return;
+
+  try {
+    const context = new AudioContextCtor();
+    const source = context.createMediaElementSource(audio);
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.75;
+    source.connect(analyser);
+    analyser.connect(context.destination);
+    const values = new Uint8Array(analyser.frequencyBinCount);
+    let frame = 0;
+    let stopped = false;
+    const read = () => {
+      if (stopped) return;
+      analyser.getByteFrequencyData(values);
+      const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+      levelListener?.(Math.min(1, average / 110));
+      frame = requestAnimationFrame(read);
+    };
+    void context.resume().catch(() => {});
+    frame = requestAnimationFrame(read);
+    stopPlaybackMeter = () => {
+      if (stopped) return;
+      stopped = true;
+      if (frame) cancelAnimationFrame(frame);
+      levelListener?.(0);
+      source.disconnect();
+      analyser.disconnect();
+      void context.close().catch(() => {});
+      stopPlaybackMeter = null;
+    };
+  } catch {
+    // Playback remains functional when metering is unavailable. The orb keeps
+    // its deterministic speaking animation instead.
+    levelListener?.(0);
+  }
 }
 
 // Browser voices, ranked. The companion is female, so male voices are excluded
@@ -156,8 +213,7 @@ function loadVoice(): void {
   // No recognised female voice: take the first English voice that isn't a
   // known male one, and only then fall back to whatever exists. Deterministic
   // either way — the same voice for every sentence of every reply.
-  preferredVoice =
-    best || pool.find((v) => !MALE_VOICE_NAMES.test(v.name)) || pool[0] || null;
+  preferredVoice = best || pool.find((v) => !MALE_VOICE_NAMES.test(v.name)) || pool[0] || null;
 }
 
 if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -197,6 +253,7 @@ function splitChunks(text: string): string[] {
 
 /** Cancel any currently-playing audio (both remote + local fallback). */
 function cancelCurrent(): void {
+  stopPlaybackMeter?.();
   if (currentAudio) {
     try {
       currentAudio.pause();
@@ -235,6 +292,7 @@ export function beginSpeech(): void {
   textQueue = [];
   cancelCurrent();
   speaking = false;
+  levelListener?.(0);
   // Intentionally does NOT notifyState — matches the old contract so the orb
   // doesn't flicker at stream start.
 }
@@ -257,6 +315,7 @@ export function stopSpeaking(): void {
   textQueue = [];
   cancelCurrent();
   speaking = false;
+  levelListener?.(0);
   notifyState(false);
 }
 
@@ -414,6 +473,7 @@ function playItem(item: QueueItem, mySession: number): Promise<void> {
         if (currentAudio === item.audio) {
           currentAudio = null;
           currentAudioUrl = null;
+          stopPlaybackMeter?.();
         }
         cancelItem(item); // revoke the blob URL now that playback is over
       }
@@ -422,6 +482,7 @@ function playItem(item: QueueItem, mySession: number): Promise<void> {
     if (item.kind === 'remote') {
       currentAudio = item.audio;
       currentAudioUrl = item.url;
+      startPlaybackLevelMeter(item.audio);
       item.audio.onended = done;
       item.audio.onerror = done;
       void item.audio.play().catch(done);

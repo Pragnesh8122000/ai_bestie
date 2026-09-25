@@ -3,7 +3,7 @@ import { config } from '../config/index';
 import { Conversation, toPreview } from '../models/Conversation';
 import { Persona } from '../models/Persona';
 import { assembleSystemPrompt, ensureDefaultPersona } from './personaService';
-import { streamChat } from './llmService';
+import { LlmProviderError, streamChat } from './llmService';
 
 const STREAM_TIMEOUT_MS = 30_000; // abort upstream if no completion by 30s
 const HEARTBEAT_MS = 15_000; // SSE keepalive to survive idle proxy/CDN drops
@@ -187,7 +187,12 @@ export async function handleChatStream(
         { _id: conversation._id, userId },
         {
           $push: {
-            messages: { role: 'assistant', content: fullResponse, timestamp: endNow, tokenCount: 0 },
+            messages: {
+              role: 'assistant',
+              content: fullResponse,
+              timestamp: endNow,
+              tokenCount: 0,
+            },
           },
           $inc: { messageCount: 1 },
           $set: {
@@ -212,11 +217,24 @@ export async function handleChatStream(
         `data: ${JSON.stringify({ type: 'error', message: 'Reply timed out. Please try again.' })}\n\n`,
       );
     } else {
+      const providerError = error instanceof LlmProviderError ? error : null;
       const raw = error instanceof Error ? error.message : 'Failed to generate response';
-      console.error('Stream error:', raw);
-      // Never leak upstream provider details in production.
-      const message = config.nodeEnv === 'production' ? 'Failed to generate response' : raw;
-      write(`data: ${JSON.stringify({ type: 'error', message })}\n\n`);
+      console.error(
+        'Chat generation failed:',
+        providerError?.internalSummary ??
+          (config.nodeEnv === 'production' ? 'unexpected error' : raw),
+      );
+      // Provider bodies can include enormous nested payloads and internal
+      // diagnostics. LlmProviderError exposes a deliberately short, actionable
+      // client message in every environment.
+      const message = providerError
+        ? providerError.message
+        : config.nodeEnv === 'production'
+          ? 'Failed to generate response. Please try again.'
+          : raw;
+      write(
+        `data: ${JSON.stringify({ type: 'error', message, ...(providerError ? { code: providerError.code } : {}) })}\n\n`,
+      );
     }
   } finally {
     clearInterval(heartbeat);
@@ -256,6 +274,34 @@ export async function createConversation(
   return conversation;
 }
 
+/**
+ * Open the most recently active conversation for one of the user's existing
+ * personas, creating that persona's first conversation when necessary.
+ *
+ * Keeping this as one server operation makes the selector idempotent from the
+ * client's point of view: one click produces one intended chat and never
+ * creates a second persona (or a duplicate chat because of a follow-up GET).
+ */
+export async function openPersonaConversation(userId: string, personaId: string) {
+  const persona = await Persona.findOne({ _id: personaId, userId }).lean();
+  if (!persona) return null;
+
+  let conversation = await Conversation.findOne({
+    userId,
+    personaId: persona._id,
+    isArchived: false,
+  })
+    .sort({ lastMessageAt: -1 })
+    .lean();
+
+  if (!conversation) {
+    const created = await createConversation(userId, personaId, persona.avatarId);
+    conversation = await Conversation.findById(created._id).lean();
+  }
+
+  return { conversation: serializeConversation(conversation), persona };
+}
+
 const LIST_DEFAULT_LIMIT = 30;
 const LIST_MAX_LIMIT = 50;
 
@@ -276,7 +322,9 @@ export async function listConversations(
 
   // Over-fetch by one to detect a further page without a second count query.
   const docs = await Conversation.find(filter)
-    .select('title titleIsCustom lastMessageAt createdAt avatarId personaId messageCount lastMessagePreview')
+    .select(
+      'title titleIsCustom lastMessageAt createdAt avatarId personaId messageCount lastMessagePreview',
+    )
     .sort({ lastMessageAt: -1 })
     .limit(limit + 1)
     .lean();
@@ -319,7 +367,10 @@ export async function renameConversation(userId: string, conversationId: string,
  * Soft rather than hard so an in-flight stream holding this document can
  * finish writing without hitting a vanished record.
  */
-export async function archiveConversation(userId: string, conversationId: string): Promise<boolean> {
+export async function archiveConversation(
+  userId: string,
+  conversationId: string,
+): Promise<boolean> {
   const result = await Conversation.updateOne(
     { _id: conversationId, userId, isArchived: false },
     { $set: { isArchived: true, deletedAt: new Date() } },
