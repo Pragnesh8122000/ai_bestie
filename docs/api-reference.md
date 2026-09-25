@@ -575,8 +575,15 @@ data: {"type":"done","messageId":"msg_1705312265000"}
 
 **Error events:**
 
+`code` is only present for provider-chain failures (see
+`LlmProviderError` in `server/src/services/llmService.ts`); a timeout or
+unexpected error omits it.
+
 ```
 data: {"type":"error","message":"AI providers are busy right now. Please try again in a minute.","code":"LLM_BUSY"}
+data: {"type":"error","message":"AI providers are temporarily unavailable. Please try again shortly.","code":"LLM_UNAVAILABLE"}
+data: {"type":"error","message":"AI service configuration needs attention. Please contact the app owner.","code":"LLM_CONFIGURATION"}
+data: {"type":"error","message":"Reply timed out. Please try again."}
 ```
 
 ---
