@@ -90,6 +90,10 @@ function buildProviders(): Provider[] {
       url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
       apiKey: config.llm.geminiApiKey,
       models: uniqueModels([config.llm.geminiModel, ...config.llm.geminiFallbackModels]),
+      // Gemini 2.5/Flash are "thinking" models — without this they spend the
+      // token budget on internal reasoning and the first visible token is
+      // delayed. "none" gives direct, fast replies (ideal for simple chat).
+      extraBody: { reasoning_effort: 'none' },
     });
   }
 
