@@ -203,11 +203,18 @@ router.post(
 
     const schema = z.object({
       message: z.string().trim().min(1).max(10000),
+      voiceMode: z.boolean().optional(),
     });
 
     const input = schema.parse(req.body);
 
-    await handleChatStream(req.userId!, String(req.params.id), input.message, res);
+    await handleChatStream(
+      req.userId!,
+      String(req.params.id),
+      input.message,
+      res,
+      input.voiceMode ?? false,
+    );
   }),
 );
 

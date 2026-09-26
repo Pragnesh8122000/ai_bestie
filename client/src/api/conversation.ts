@@ -98,14 +98,19 @@ export const conversationApi = {
    * is no auto-reconnect; the caller must parse the stream and abort it (via
    * `signal`) on unmount or when starting a new message.
    */
-  streamMessage: (conversationId: string, message: string, signal?: AbortSignal) => {
+  streamMessage: (
+    conversationId: string,
+    message: string,
+    signal?: AbortSignal,
+    voiceMode?: boolean,
+  ) => {
     return fetch(`/api/conversations/${conversationId}/messages/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       credentials: 'include',
-      body: JSON.stringify({ message }),
+      body: JSON.stringify(voiceMode ? { message, voiceMode: true } : { message }),
       signal,
     });
   },

@@ -97,6 +97,32 @@ describe('sendMessage', () => {
     expect(state.conversations[0].messageCount).toBe(2);
   });
 
+  it('forwards voiceMode to the stream request so the server can shorten voice replies', async () => {
+    useChatStore.setState({
+      conversations: [conversation('a')],
+      activeConversation: { ...conversation('a'), messages: [] },
+      activeConversationId: 'a',
+    });
+    api.streamMessage.mockResolvedValue(sseResponse([{ type: 'done', messageId: 'm1' }]));
+
+    await useChatStore.getState().sendMessage('Hello Sam', { voiceMode: true });
+
+    expect(api.streamMessage).toHaveBeenCalledWith('a', 'Hello Sam', expect.anything(), true);
+  });
+
+  it('omits voiceMode for a normal text-chat send', async () => {
+    useChatStore.setState({
+      conversations: [conversation('a')],
+      activeConversation: { ...conversation('a'), messages: [] },
+      activeConversationId: 'a',
+    });
+    api.streamMessage.mockResolvedValue(sseResponse([{ type: 'done', messageId: 'm1' }]));
+
+    await useChatStore.getState().sendMessage('Hello Sam');
+
+    expect(api.streamMessage).toHaveBeenCalledWith('a', 'Hello Sam', expect.anything(), undefined);
+  });
+
   it('auto-titles the conversation from the first user message', async () => {
     useChatStore.setState({
       conversations: [conversation('a')],

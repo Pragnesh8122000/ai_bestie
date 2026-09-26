@@ -159,7 +159,10 @@ describe('voice consistency', () => {
   });
 
   it('never picks a male voice even when no known female voice exists', async () => {
-    installedVoices = [new FakeVoice('Daniel', 'en-GB'), new FakeVoice('Google UK English Female', 'en-GB')];
+    installedVoices = [
+      new FakeVoice('Daniel', 'en-GB'),
+      new FakeVoice('Google UK English Female', 'en-GB'),
+    ];
     installSpeechSynthesis();
     vi.stubGlobal(
       'fetch',
@@ -456,10 +459,14 @@ describe('inter-sentence gap', () => {
     const order = events.filter((e) => e.kind.startsWith('play')).map((e) => `${e.kind}:${e.n}`);
     // Strictly start,end,start,end... — never two overlapping utterances.
     expect(order).toEqual([
-      'play-start:1', 'play-end:1',
-      'play-start:2', 'play-end:2',
-      'play-start:3', 'play-end:3',
-      'play-start:4', 'play-end:4',
+      'play-start:1',
+      'play-end:1',
+      'play-start:2',
+      'play-end:2',
+      'play-start:3',
+      'play-end:3',
+      'play-start:4',
+      'play-end:4',
     ]);
   });
 
@@ -576,7 +583,11 @@ describe('speech-to-text', () => {
     lang = '';
     continuous = false;
     interimResults = false;
-    onresult: ((e: { results: ArrayLike<{ 0: { transcript: string }; isFinal: boolean; length: number }> }) => void) | null = null;
+    onresult:
+      | ((e: {
+          results: ArrayLike<{ 0: { transcript: string }; isFinal: boolean; length: number }>;
+        }) => void)
+      | null = null;
     onerror: ((e: { error: string }) => void) | null = null;
     onend: (() => void) | null = null;
     started = false;
@@ -611,7 +622,7 @@ describe('speech-to-text', () => {
     expect(speech.isSTTSupported()).toBe(true);
   });
 
-  it('resolves with the final transcript on the Safari-like working path', async () => {
+  it('resolves immediately on a clean final result — no artificial restart latency for the common case', async () => {
     let instance!: FakeRecognition;
     (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
       constructor() {
@@ -621,8 +632,8 @@ describe('speech-to-text', () => {
     };
     await loadFreshModule();
 
-    const interim: string[] = [];
-    const session = speech.listenOnce('en-US', (t) => interim.push(t));
+    const session = speech.listenOnce('en-US');
+    expect(instance.continuous).toBe(false);
     instance.onresult?.({ results: [result('hello world', true)] });
     instance.onend?.();
 
@@ -647,6 +658,151 @@ describe('speech-to-text', () => {
 
     expect(interim).toEqual(['hel', 'hello']);
     await expect(session.promise).resolves.toBe('hello');
+  });
+
+  it('restarts when the engine ends an attempt mid-word, instead of dropping the interim tail', async () => {
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+    };
+    await loadFreshModule();
+
+    const session = speech.listenOnce('en-US');
+    const firstAttempt = instance;
+    // Only an interim ever arrived — the engine gave up before promoting it
+    // to a final result. This is the specific WebKit/Safari cutoff this
+    // function exists to recover from, so it must restart rather than lose
+    // "hello".
+    firstAttempt.onresult?.({ results: [result('hello', false)] });
+    firstAttempt.onend?.();
+
+    await flush(250); // RESTART_DELAY_MS
+
+    expect(instance).not.toBe(firstAttempt); // restarted rather than losing the word
+    instance.onresult?.({ results: [result('world', true)] });
+    instance.onend?.(); // a clean final result: the engine now considers this complete
+
+    await expect(session.promise).resolves.toBe('hello world');
+  });
+
+  it('stitches speech across two restarts so a mid-sentence pause is not dropped', async () => {
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+    };
+    await loadFreshModule();
+
+    const session = speech.listenOnce('en-US');
+    const firstAttempt = instance;
+    firstAttempt.onresult?.({ results: [result('first part', false)] });
+    firstAttempt.onend?.();
+    await flush(250);
+    expect(instance).not.toBe(firstAttempt);
+    const secondAttempt = instance;
+
+    // The speaker kept talking after the pause the engine mistook for the end.
+    secondAttempt.onresult?.({ results: [result('second part', false)] });
+    secondAttempt.onend?.();
+    await flush(250);
+    expect(instance).not.toBe(secondAttempt);
+
+    // A clean final result: the engine now considers the turn complete.
+    instance.onresult?.({ results: [result('third part', true)] });
+    instance.onend?.();
+
+    await expect(session.promise).resolves.toBe('first part second part third part');
+  });
+
+  it('treats a mid-turn "no-speech" error the same as an early onend, not a fatal error', async () => {
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+    };
+    await loadFreshModule();
+
+    const session = speech.listenOnce('en-US');
+    const firstAttempt = instance;
+    firstAttempt.onresult?.({ results: [result('hello', false)] });
+    firstAttempt.onerror?.({ error: 'no-speech' });
+    await flush(250);
+    expect(instance).not.toBe(firstAttempt);
+    instance.onresult?.({ results: [result('world', true)] });
+    instance.onend?.();
+
+    await expect(session.promise).resolves.toBe('hello world');
+  });
+
+  it('resolves quietly (not rejects) when "no-speech" fires with nothing ever heard', async () => {
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+    };
+    await loadFreshModule();
+
+    const session = speech.listenOnce('en-US');
+    instance.onerror?.({ error: 'no-speech' });
+
+    await expect(session.promise).resolves.toBe('');
+  });
+
+  it('decides on its own silence-commit timeout instead of waiting on the engine', async () => {
+    vi.useFakeTimers();
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+    };
+    await loadFreshModule();
+
+    const session = speech.listenOnce('en-US');
+    instance.onresult?.({ results: [result('done talking', true)] });
+    expect(instance.stopped).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1200); // SILENCE_COMMIT_MS
+
+    expect(instance.stopped).toBe(true);
+    instance.onend?.();
+    await expect(session.promise).resolves.toBe('done talking');
+    vi.useRealTimers();
+  });
+
+  it('defaults the overall turn ceiling to 20s, not the old 8s one-shot cutoff', async () => {
+    vi.useFakeTimers();
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+      stop() {
+        this.stopped = true;
+        this.onend?.();
+      }
+    };
+    await loadFreshModule();
+
+    const session = speech.listenOnce('en-US');
+    vi.advanceTimersByTime(19_999);
+    expect(instance.stopped).toBe(false);
+    vi.advanceTimersByTime(1);
+
+    expect(instance.stopped).toBe(true);
+    await expect(session.promise).resolves.toBe('');
+    vi.useRealTimers();
   });
 
   it('rejects with "network" on the Brave-like path (constructor present, backend blocked)', async () => {

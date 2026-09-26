@@ -95,55 +95,82 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
   }, [exit, toggleMute]);
 
   useEffect(() => {
-    if (
-      muted ||
-      isStreaming ||
-      turnPending ||
-      avatarState !== 'idle' ||
-      sessionRef.current ||
-      !activeConversation
-    ) {
-      return;
-    }
+    if (muted || turnPending || sessionRef.current || !activeConversation) return;
 
-    const timer = setTimeout(() => {
-      if (!mountedRef.current || sessionRef.current) return;
-      setNotice(null);
-      setIsListening(true);
-      const session = startVoiceTurn(setMicLevel);
-      sessionRef.current = session;
-      session.promise
-        .then(async ({ transcript, usedServerFallback }) => {
-          if (!mountedRef.current || sessionRef.current !== session) return;
-          sessionRef.current = null;
-          setIsListening(false);
-          setMicLevel(0);
-          if (usedServerFallback) {
-            setNotice(
-              'Brave fallback: audio was sent to OpenAI for transcription. API usage may be billed.',
-            );
-          }
-          if (transcript) {
-            setTurnPending(true);
-            await sendMessage(transcript);
-            if (mountedRef.current) setTurnPending(false);
-          }
-          if (mountedRef.current) setCycle((value) => value + 1);
-        })
-        .catch((error) => {
-          if (!mountedRef.current || sessionRef.current !== session) return;
-          sessionRef.current = null;
-          setIsListening(false);
-          setMicLevel(0);
-          setNotice(
-            error instanceof Error ? error.message : 'Voice input failed. Please try again.',
-          );
-          // Permission, device, and external-transcription failures need a
-          // deliberate retry. Automatically opening the microphone again
-          // would loop permission prompts or repeated metered API calls.
-          setMuted(true);
-        });
-    }, 450);
+    // Two ways a turn can start: the normal handoff once the persona has
+    // fully finished (idle, debounced so we don't clip the tail of its own
+    // audio), or a barge-in probe while it's still talking — started with no
+    // debounce so an interruption is caught as early as possible. The probe
+    // stays silent (orb keeps showing "speaking") until real speech is
+    // detected; only then do we interrupt.
+    const canStartIdle = avatarState === 'idle' && !isStreaming;
+    const isBargeIn = avatarState === 'speaking';
+    if (!canStartIdle && !isBargeIn) return;
+
+    const timer = setTimeout(
+      () => {
+        if (!mountedRef.current || sessionRef.current) return;
+        setNotice(null);
+        let bargedIn = !isBargeIn;
+        if (!isBargeIn) setIsListening(true);
+
+        const handleInterim = (text: string) => {
+          if (bargedIn || !text.trim()) return;
+          bargedIn = true;
+          // Speaking always takes priority: stop the persona's own audio and
+          // the reply it's still generating, then keep listening on this same
+          // recognition session so the words that triggered it aren't lost.
+          useChatStore.getState().abortStream();
+          setIsListening(true);
+        };
+
+        const session = startVoiceTurn(
+          setMicLevel,
+          undefined,
+          isBargeIn ? handleInterim : undefined,
+        );
+        sessionRef.current = session;
+        session.promise
+          .then(async ({ transcript, usedServerFallback }) => {
+            if (!mountedRef.current || sessionRef.current !== session) return;
+            sessionRef.current = null;
+            setIsListening(false);
+            setMicLevel(0);
+            if (usedServerFallback) {
+              setNotice(
+                'Brave fallback: audio was sent to OpenAI for transcription. API usage may be billed.',
+              );
+            }
+            if (transcript) {
+              setTurnPending(true);
+              await sendMessage(transcript, { voiceMode: true });
+              if (mountedRef.current) setTurnPending(false);
+            }
+            if (mountedRef.current) setCycle((value) => value + 1);
+          })
+          .catch((error) => {
+            if (!mountedRef.current || sessionRef.current !== session) return;
+            sessionRef.current = null;
+            setIsListening(false);
+            setMicLevel(0);
+            // A silent barge-in probe failing (e.g. permission revoked mid-call)
+            // must not surface as an error while the persona is mid-reply —
+            // only report it if the user had actually started talking to us.
+            if (bargedIn || !isBargeIn) {
+              setNotice(
+                error instanceof Error ? error.message : 'Voice input failed. Please try again.',
+              );
+              // Permission, device, and external-transcription failures need a
+              // deliberate retry. Automatically opening the microphone again
+              // would loop permission prompts or repeated metered API calls.
+              setMuted(true);
+            } else if (mountedRef.current) {
+              setCycle((value) => value + 1);
+            }
+          });
+      },
+      isBargeIn ? 0 : 450,
+    );
 
     return () => clearTimeout(timer);
   }, [activeConversation, avatarState, cycle, isStreaming, muted, sendMessage, turnPending]);

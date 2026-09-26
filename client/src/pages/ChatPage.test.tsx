@@ -46,6 +46,7 @@ import { usePersonaStore } from '../stores/personaStore';
 import { conversationApi } from '../api/conversation';
 import { personaApi } from '../api/persona';
 import { startVoiceTurn } from '../utils/voiceCapture';
+import { stopSpeaking } from '../utils/speech';
 
 const api = conversationApi as unknown as Record<string, ReturnType<typeof vi.fn>>;
 const personaApiMock = personaApi as unknown as Record<string, ReturnType<typeof vi.fn>>;
@@ -185,6 +186,71 @@ describe('ChatPage drawer', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('lets the user barge in: speech heard while the persona is talking stops it instead of waiting', async () => {
+    let capturedOnInterim: ((text: string) => void) | undefined;
+    vi.mocked(startVoiceTurn).mockImplementation((_onLevel, _maxMs, onInterim) => {
+      capturedOnInterim = onInterim;
+      return { promise: new Promise(() => {}), stop: vi.fn() };
+    });
+    render(<ChatPage />, { wrapper: MemoryRouter });
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole('button', { name: 'Start voice chat' })[1]);
+    });
+
+    // The persona is still mid-reply, audio actively playing.
+    act(() => {
+      useChatStore.setState({ avatarState: 'speaking', isStreaming: true });
+    });
+
+    // A barge-in probe starts immediately (no idle debounce) while it's
+    // speaking, and stays silent — the orb still shows "speaking" — until
+    // real speech is detected.
+    await waitFor(() => expect(startVoiceTurn).toHaveBeenCalled());
+    expect(capturedOnInterim).toBeTypeOf('function');
+    expect(screen.getByText(/is speaking/i)).toBeInTheDocument();
+
+    act(() => {
+      capturedOnInterim?.('wait, actually');
+    });
+
+    expect(stopSpeaking).toHaveBeenCalled();
+    expect(useChatStore.getState().avatarState).toBe('idle');
+    expect(useChatStore.getState().isStreaming).toBe(false);
+    expect(await screen.findByText(/is listening/i)).toBeInTheDocument();
+  });
+
+  it('sends the barged-in/normal voice transcript with voiceMode so replies stay short', async () => {
+    vi.mocked(startVoiceTurn).mockReturnValueOnce({
+      promise: Promise.resolve({ transcript: 'how do I fix this', usedServerFallback: false }),
+      stop: vi.fn(),
+    });
+    api.streamMessage.mockResolvedValue({
+      ok: true,
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              `data: ${JSON.stringify({ type: 'done', messageId: 'm1' })}\n\n`,
+            ),
+          );
+          controller.close();
+        },
+      }),
+    });
+    render(<ChatPage />, { wrapper: MemoryRouter });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Start voice chat' })[1]);
+
+    await waitFor(() =>
+      expect(api.streamMessage).toHaveBeenCalledWith(
+        'a',
+        'how do I fix this',
+        expect.anything(),
+        true,
+      ),
+    );
   });
 
   it('shows the persona archetype on saved and streaming assistant message rows', async () => {

@@ -70,11 +70,19 @@ export function deriveTitle(firstUserMessage: string): string {
  * on client disconnect or a 30s deadline, so closing the tab mid-stream stops
  * burning the free-tier LLM quota into a dead socket.
  */
+// Voice replies are heard, not read: a text-chat-length paragraph is a wall
+// of sound and most of it is thrown away as filler by the time it's spoken.
+// This caps generation length specifically for voice mode; text chat is
+// unaffected (see assembleSystemPrompt's own voiceMode branch for the prompt
+// side of this).
+const VOICE_MODE_MAX_TOKENS = 220;
+
 export async function handleChatStream(
   userId: string,
   conversationId: string,
   userMessage: string,
   res: Response,
+  voiceMode = false,
 ): Promise<void> {
   // 1. Load conversation
   const conversation = await Conversation.findOne({
@@ -95,7 +103,7 @@ export async function handleChatStream(
     return;
   }
 
-  const systemPrompt = assembleSystemPrompt(persona);
+  const systemPrompt = assembleSystemPrompt(persona, voiceMode);
 
   // 3. Auto-title from the first user message. Guarded on `messageCount: 0`
   // so it can only ever match before the push below, and on `titleIsCustom`
@@ -165,6 +173,7 @@ export async function handleChatStream(
     await streamChat({
       systemPrompt,
       messages: recentMessages,
+      ...(voiceMode ? { maxTokens: VOICE_MODE_MAX_TOKENS } : {}),
       signal: ac.signal,
       onToken: (token) => {
         if (firstToken) {
