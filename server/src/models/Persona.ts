@@ -17,7 +17,7 @@ export interface IPersona extends Document {
   traits: ITrait;
   createdAt: Date;
   updatedAt: Date;
-  getSystemPrompt(): string;
+  getSystemPrompt(voiceMode?: boolean): string;
 }
 
 const traitSchema = new Schema<ITrait>(
@@ -75,7 +75,7 @@ personaSchema.pre('save', function (next) {
 });
 
 // Virtual: assemble the 5-layer system prompt
-personaSchema.methods.getSystemPrompt = function (): string {
+personaSchema.methods.getSystemPrompt = function (voiceMode = false): string {
   const config = archetypeConfigs[this.archetype as keyof typeof archetypeConfigs];
   if (!config) {
     throw new Error(`Unknown archetype: ${this.archetype}`);
@@ -135,6 +135,21 @@ personaSchema.methods.getSystemPrompt = function (): string {
 
   const calibration = `Based on the user's preference settings:\n${traitInstructions}`;
 
+  // Voice-mode layer: this reply will be spoken aloud in a live call, not
+  // read as text, so it needs a different length/shape than text chat, not
+  // just a shorter version of the same style. Kept as its own layer (rather
+  // than folded into `formatting`) so text chat's prompt is untouched when
+  // this is omitted.
+  const voiceInstruction = voiceMode
+    ? [
+        'VOICE MODE: This reply is being spoken aloud in a live voice call, not displayed as text.',
+        'Keep it SHORT — one to three sentences for a normal reply. Only go longer if the user explicitly asked for detail, a list of steps, or a story.',
+        'Answer only what they just said. Skip preamble, disclaimers, and restating the question.',
+        'Never use Markdown, headings, or bullet lists — say it in plain flowing sentences, the way you’d actually talk.',
+        'At most one short follow-up question, and only when it genuinely moves the conversation forward.',
+      ].join(' ')
+    : '';
+
   // Chain of Persona (CoP) self-check
   const copInstruction = [
     '',
@@ -142,10 +157,15 @@ personaSchema.methods.getSystemPrompt = function (): string {
     '1. Would [your name] say this? Does it match your voice?',
     '2. Is this consistent with how you have been speaking in this conversation?',
     '3. Are you breaking any behavioral rules?',
+    voiceMode ? '4. Is this short enough to be spoken aloud, not read?' : null,
     'If any answer is NO, revise before outputting.',
-  ].join('\n');
+  ]
+    .filter((line): line is string => line !== null)
+    .join('\n');
 
-  return [identity, voice, rules, context, calibration, copInstruction].join('\n\n');
+  return [identity, voice, rules, context, calibration, voiceInstruction, copInstruction]
+    .filter(Boolean)
+    .join('\n\n');
 };
 
 function capitalize(s: string): string {
@@ -159,29 +179,29 @@ function getTraitDescriptor(
 ): string {
   const descriptions: Record<string, Record<string, string>> = {
     directness: {
-      low: "Be gentle and indirect. Soften feedback. Use cushioning language.",
-      mid: "Be balanced. Give honest feedback with warmth.",
+      low: 'Be gentle and indirect. Soften feedback. Use cushioning language.',
+      mid: 'Be balanced. Give honest feedback with warmth.',
       high: "Be straightforward and direct. Don't soften feedback, but maintain respect.",
     },
     warmth: {
-      low: "Be reserved and matter-of-fact. Focus on information over emotion.",
-      mid: "Show genuine care. Use affirming language when appropriate.",
-      high: "Be warmly expressive. Show empathy and emotional attunement openly.",
+      low: 'Be reserved and matter-of-fact. Focus on information over emotion.',
+      mid: 'Show genuine care. Use affirming language when appropriate.',
+      high: 'Be warmly expressive. Show empathy and emotional attunement openly.',
     },
     proactivity: {
-      low: "Be reactive. Wait for the user to ask before offering suggestions.",
-      mid: "Offer suggestions when relevant, but ask first.",
+      low: 'Be reactive. Wait for the user to ask before offering suggestions.',
+      mid: 'Offer suggestions when relevant, but ask first.',
       high: "Be proactive. Offer solutions and suggestions readily. Don't just ask questions.",
     },
     depth: {
-      low: "Keep responses surface-level. Brief and practical.",
-      mid: "Go beyond surface advice. Explore root causes when relevant.",
-      high: "Dive deep. Explore root causes, philosophical underpinnings, and systemic patterns.",
+      low: 'Keep responses surface-level. Brief and practical.',
+      mid: 'Go beyond surface advice. Explore root causes when relevant.',
+      high: 'Dive deep. Explore root causes, philosophical underpinnings, and systemic patterns.',
     },
     accountability: {
       low: "Be supportive and validating. Don't push or challenge.",
-      mid: "Gently challenge. Follow up on commitments. Balance support with accountability.",
-      high: "Hold the user accountable. Challenge excuses. Follow up on commitments firmly.",
+      mid: 'Gently challenge. Follow up on commitments. Balance support with accountability.',
+      high: 'Hold the user accountable. Challenge excuses. Follow up on commitments firmly.',
     },
   };
 

@@ -12,7 +12,7 @@ import { archetypeConfigs, ArchetypeType } from '../data/archetypes';
  * (headings, bullet walls) instead of talking, which reads badly on screen and
  * worse as speech.
  */
-function promptFor(archetype: ArchetypeType): string {
+function promptFor(archetype: ArchetypeType, voiceMode = false): string {
   const persona = new Persona({
     userId: '000000000000000000000000',
     name: 'Sam',
@@ -20,7 +20,7 @@ function promptFor(archetype: ArchetypeType): string {
     avatarId: 'a',
     traits: archetypeConfigs[archetype].defaultTraits,
   });
-  return persona.getSystemPrompt();
+  return persona.getSystemPrompt(voiceMode);
 }
 
 const ARCHETYPES = Object.keys(archetypeConfigs) as ArchetypeType[];
@@ -67,5 +67,23 @@ describe('persona system prompt', () => {
     const prompt = promptFor('friend');
     expect(prompt.indexOf('You are Sam')).toBeLessThan(prompt.indexOf('FORMATTING:'));
     expect(prompt.indexOf('FORMATTING:')).toBeLessThan(prompt.indexOf('RULE 1'));
+  });
+
+  it('omits voice-mode guidance for a normal (text-chat) prompt', () => {
+    expect(promptFor('friend', false)).not.toContain('VOICE MODE');
+  });
+
+  it('adds voice-mode guidance for short, unformatted, spoken replies when requested', () => {
+    const prompt = promptFor('friend', true);
+    expect(prompt).toContain('VOICE MODE');
+    expect(prompt).toMatch(/one to three sentences/i);
+    expect(prompt).toMatch(/never use markdown/i);
+  });
+
+  it('keeps every other layer intact in voice mode', () => {
+    const prompt = promptFor('friend', true);
+    expect(prompt).toContain('You are Sam');
+    expect(prompt).toContain('FORMATTING:');
+    expect(prompt).toContain('RULE 1');
   });
 });

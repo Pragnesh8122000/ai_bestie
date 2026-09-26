@@ -100,6 +100,53 @@ describe('voice turn capture', () => {
     expect(stopTrack).toHaveBeenCalledTimes(1);
   });
 
+  it('defaults the turn cap to 20s now that listenOnce restarts across pauses itself', async () => {
+    isSTTSupported.mockReturnValue(true);
+    listenOnce.mockReturnValue({ promise: Promise.resolve('hi'), stop: vi.fn() });
+
+    await startVoiceTurn().promise;
+
+    expect(listenOnce).toHaveBeenCalledWith('en-US', undefined, 20_000);
+  });
+
+  it('forwards an onInterim callback so a barge-in probe can detect speech while TTS plays', async () => {
+    isSTTSupported.mockReturnValue(true);
+    listenOnce.mockReturnValue({ promise: Promise.resolve('hi'), stop: vi.fn() });
+    const onInterim = vi.fn();
+
+    await startVoiceTurn(undefined, 1_000, onInterim).promise;
+
+    expect(listenOnce).toHaveBeenCalledWith('en-US', onInterim, 1_000);
+  });
+
+  it('never uploads to the paid transcription endpoint for a silent barge-in probe on Brave network failures', async () => {
+    vi.useFakeTimers();
+    isSTTSupported.mockReturnValue(true);
+    listenOnce.mockReturnValue({
+      promise: Promise.reject(new Error('network')),
+      stop: vi.fn(),
+    });
+
+    const result = startVoiceTurn(undefined, 1_000, undefined, false).promise;
+    await vi.runAllTimersAsync();
+
+    await expect(result).resolves.toEqual({ transcript: '', usedServerFallback: false });
+    expect(transcribeVoiceClip).not.toHaveBeenCalled();
+    expect(stopTrack).toHaveBeenCalledTimes(1);
+  });
+
+  it('never uploads to the paid transcription endpoint for a silent barge-in probe when STT is unsupported', async () => {
+    vi.useFakeTimers();
+    isSTTSupported.mockReturnValue(false);
+
+    const result = startVoiceTurn(undefined, 1_000, undefined, false).promise;
+    await vi.runAllTimersAsync();
+
+    await expect(result).resolves.toEqual({ transcript: '', usedServerFallback: false });
+    expect(transcribeVoiceClip).not.toHaveBeenCalled();
+    expect(stopTrack).toHaveBeenCalledTimes(1);
+  });
+
   it('stops microphone resources and avoids upload when voice mode exits', async () => {
     let finishRecognition: (value: string) => void = () => {};
     isSTTSupported.mockReturnValue(true);

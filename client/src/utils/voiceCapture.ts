@@ -1,7 +1,9 @@
 import { transcribeVoiceClip } from '../api/transcription';
 import { isSTTSupported, listenOnce, type ListenSession } from './speech';
 
-const DEFAULT_MAX_MS = 8_000;
+// A turn cap, not a single recognition session's length — `listenOnce` now
+// restarts transparently across pauses, so this only bounds one whole turn.
+const DEFAULT_MAX_MS = 20_000;
 
 export interface VoiceTurnResult {
   transcript: string;
@@ -114,6 +116,8 @@ async function startCapture(onLevel?: (level: number) => void): Promise<Capture>
 export function startVoiceTurn(
   onLevel?: (level: number) => void,
   maxMs = DEFAULT_MAX_MS,
+  onInterim?: (text: string) => void,
+  allowServerFallback = true,
 ): VoiceTurnSession {
   let cancelled = false;
   let recognition: ListenSession | null = null;
@@ -140,7 +144,7 @@ export function startVoiceTurn(
 
     let shouldFallback = !isSTTSupported();
     if (!shouldFallback) {
-      recognition = listenOnce('en-US', undefined, maxMs);
+      recognition = listenOnce('en-US', onInterim, maxMs);
       try {
         const transcript = (await recognition.promise).trim();
         if (cancelled) return { transcript: '', usedServerFallback: false };
@@ -162,6 +166,10 @@ export function startVoiceTurn(
     }
 
     if (!shouldFallback) return { transcript: '', usedServerFallback: false };
+    if (!allowServerFallback) {
+      await capture.stop();
+      return { transcript: '', usedServerFallback: false };
+    }
     await wait(maxMs - (performance.now() - startedAt));
     const recording = await capture.stop();
     if (cancelled || recording.blob.size === 0) {

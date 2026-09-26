@@ -33,8 +33,8 @@ export async function ensureDefaultPersona(userId: string): Promise<IPersona> {
  * is no separate memory-retrieval step here. The semantic/episodic memory
  * layers from an earlier design were removed; only session memory remains.
  */
-export function assembleSystemPrompt(persona: IPersona): string {
-  return persona.getSystemPrompt();
+export function assembleSystemPrompt(persona: IPersona, voiceMode = false): string {
+  return persona.getSystemPrompt(voiceMode);
 }
 
 /**

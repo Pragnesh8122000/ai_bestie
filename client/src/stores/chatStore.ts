@@ -32,7 +32,7 @@ interface ChatState {
   renameConversation: (id: string, title: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   setSidebarOpen: (open: boolean) => void;
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string, opts?: { voiceMode?: boolean }) => Promise<void>;
   abortStream: () => void;
   clearError: () => void;
   toggleTts: () => void;
@@ -373,7 +373,7 @@ export const useChatStore = create<ChatState>((set, getState) => ({
     });
   },
 
-  sendMessage: async (content: string) => {
+  sendMessage: async (content: string, opts?: { voiceMode?: boolean }) => {
     const { activeConversation, isStreaming } = getState();
     // Single-flight at the state boundary, not just the disabled button. Two
     // same-tick UI events must never emit duplicate generation requests.
@@ -448,7 +448,12 @@ export const useChatStore = create<ChatState>((set, getState) => ({
     resetWatchdog();
 
     try {
-      const response = await conversationApi.streamMessage(convId, content, controller.signal);
+      const response = await conversationApi.streamMessage(
+        convId,
+        content,
+        controller.signal,
+        opts?.voiceMode,
+      );
 
       if (!response.ok) {
         let message = `Message request failed (${response.status})`;

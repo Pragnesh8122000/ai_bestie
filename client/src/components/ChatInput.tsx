@@ -66,6 +66,12 @@ export default function ChatInput() {
       if (transcript) {
         setMessage((prev) => (prev ? `${prev} ${transcript}` : transcript));
         inputRef.current?.focus();
+      } else {
+        // A resolved empty transcript means the turn ended (silence-commit or
+        // the engine's own end) without ever hearing speech \u2014 no longer a
+        // rejection (see speech.ts's `no-speech` handling), so surface the
+        // same message here instead.
+        setMicError('Didn\u2019t catch that \u2014 try again.');
       }
     } catch (err) {
       console.error('Speech recognition failed:', err);
@@ -82,8 +88,6 @@ export default function ChatInput() {
         setMicError('Mic access is blocked. Allow microphone access for this site and try again.');
       } else if (code === 'audio-capture') {
         setMicError('No microphone found. Connect one and try again.');
-      } else if (code === 'no-speech') {
-        setMicError('Didn\u2019t catch that \u2014 try again.');
       } else if (code !== 'aborted') {
         // 'aborted' is a deliberate stop (e.g. unmount), not a failure worth
         // surfacing to the user.
