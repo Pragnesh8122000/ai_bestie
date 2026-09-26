@@ -130,6 +130,24 @@ export const config = {
     // Slightly under 1.0 reads as more relaxed/human than the default clip.
     speed: Number(process.env.TTS_SPEED ?? 0.95),
     maxChars: Number(process.env.TTS_MAX_CHARS ?? 1000),
+    // ONNX Runtime threads per inference. 'auto' (default) = the container's
+    // CPU grant capped at 2 (1 on Linux when the grant can't be read, since
+    // ORT would otherwise size itself from the *host's* cores). Measured on
+    // an M5: 1 thread 0.62x real time, 2 threads 0.39x.
+    numThreads: process.env.TTS_NUM_THREADS?.trim() || 'auto',
+    // Inferences that may run at once. One model instance on a CPU host:
+    // parallel requests only split the same cores, so keep 1 unless the host
+    // has cores to spare (then raise it rather than numThreads).
+    concurrency: Math.max(1, Number(process.env.TTS_CONCURRENCY) || 1),
+    // Requests allowed to wait for a slot before new ones get 503 + Retry-After.
+    maxQueue: Math.max(1, Number(process.env.TTS_MAX_QUEUE) || 8),
+    queueTimeoutMs: Math.max(1000, Number(process.env.TTS_QUEUE_TIMEOUT_MS) || 10_000),
+    // Answer 503 if one chunk's inference exceeds this (the slot stays held
+    // until the native call returns). The client gives up at 35s overall.
+    inferenceTimeoutMs: Math.max(1000, Number(process.env.TTS_INFERENCE_TIMEOUT_MS) || 20_000),
+    // Run one short inference right after loading so the first real reply
+    // doesn't pay the model's first-run cost.
+    warmup: process.env.TTS_WARMUP !== 'false',
   },
 } as const;
 

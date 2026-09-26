@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { conversationApi, Conversation, Message } from '../api/conversation';
 import { speakChunk, beginSpeech, stopSpeaking, setTtsStateListener } from '../utils/speech';
 import { deriveTitle, toPreview, DEFAULT_TITLE } from '../utils/conversation';
-import { takeSpeech } from '../utils/speechText';
+import { SpeechChunker } from '../utils/speechChunker';
 import { usePersonaStore } from './personaStore';
 
 type AvatarState = 'idle' | 'thinking' | 'speaking' | 'listening';
@@ -48,14 +48,6 @@ let streamId = 0;
 // Monotonic id for conversation loads, so a slow GET for conversation A can't
 // overwrite a faster GET for B when the user switches rapidly.
 let loadId = 0;
-// Raw (still-Markdown) text accumulated for TTS during the current stream.
-// Transient, not reactive. `takeSpeech` decides when enough has arrived to
-// speak and strips the syntax before it reaches the voice.
-let ttsSentenceBuffer = '';
-// Whether any audio chunk has been queued yet for the current reply. The
-// first chunk only waits for one complete sentence so playback starts
-// promptly; later chunks batch two for continuous prosody (see takeSpeech).
-let ttsHasSpokenFirstChunk = false;
 
 const WATCHDOG_MS = 60_000; // abort if no chunk arrives for 60s
 
@@ -426,9 +418,10 @@ export const useChatStore = create<ChatState>((set, getState) => ({
       }
     }
 
-    // Reset TTS for the new reply.
-    ttsSentenceBuffer = '';
-    ttsHasSpokenFirstChunk = false;
+    // Reset TTS for the new reply. The chunker turns this stream's raw
+    // (still-Markdown) tokens into speakable chunks, sized so each can be
+    // synthesized while the previous one plays.
+    const chunker = new SpeechChunker();
     beginSpeech();
 
     const resetWatchdog = () => {
@@ -511,32 +504,19 @@ export const useChatStore = create<ChatState>((set, getState) => ({
                 assistantContent += event.content;
                 set({ streamingContent: assistantContent });
                 if (getState().ttsEnabled) {
-                  ttsSentenceBuffer += event.content;
-                  // `takeSpeech` holds until ~2 complete utterances have
-                  // arrived (so the neural voice carries intonation across the
-                  // boundary instead of resetting prosody every sentence),
-                  // keeps constructs like fenced blocks whole, and strips the
-                  // Markdown so the voice speaks words rather than asterisks.
-                  const { speech, rest } = takeSpeech(
-                    ttsSentenceBuffer,
-                    false,
-                    ttsHasSpokenFirstChunk ? undefined : 1,
-                  );
-                  if (speech) {
-                    speakChunk(speech);
-                    ttsSentenceBuffer = rest;
-                    ttsHasSpokenFirstChunk = true;
-                  }
+                  // The chunker keeps constructs like fenced blocks whole,
+                  // strips the Markdown so the voice speaks words rather than
+                  // asterisks, and sizes each chunk so it is synthesized
+                  // before the previous one finishes playing.
+                  for (const speech of chunker.push(event.content)) speakChunk(speech);
                 }
                 break;
 
               case 'done': {
                 // Flush any remaining buffered text, including a trailing
                 // fragment with no sentence end.
-                if (ttsSentenceBuffer.trim()) {
-                  const { speech } = takeSpeech(ttsSentenceBuffer, true);
-                  if (speech) speakChunk(speech);
-                  ttsSentenceBuffer = '';
+                if (getState().ttsEnabled) {
+                  for (const speech of chunker.flush()) speakChunk(speech);
                 }
                 const assistantMessage: Message = {
                   _id: event.messageId,

@@ -11,7 +11,8 @@
     "seed": "tsx src/seed.ts",
     "migrate:auth": "tsx src/scripts/migrate-auth-providers.ts",
     "download-tts-model": "tsx src/scripts/download-tts-model.ts",
-    "verify-voice": "tsx src/scripts/verify-voice.mts"
+    "verify-voice": "tsx src/scripts/verify-voice.mts",
+    "bench-tts": "node scripts/with-tts-env.cjs tsx src/scripts/bench-tts.mts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

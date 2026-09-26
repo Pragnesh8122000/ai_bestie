@@ -92,6 +92,13 @@ TTS_ENABLED=true
 TTS_MODEL_VERSION=v1_0
 TTS_SID=3      # af_heart
 TTS_SPEED=0.95
+# Inference tuning (defaults shown). auto = container CPU grant, capped at 2.
+# TTS_NUM_THREADS=auto
+# TTS_CONCURRENCY=1
+# TTS_MAX_QUEUE=8
+# TTS_QUEUE_TIMEOUT_MS=10000
+# TTS_INFERENCE_TIMEOUT_MS=20000
+# TTS_WARMUP=true
 
 # No Anthropic, OpenAI chat-generation, Voyage, or Redis keys are used.
 ```
@@ -215,15 +222,30 @@ Voice replies use **Kokoro** via the `sherpa-onnx-node` native addon, running
    model path and valid speaker-id range. `TTS_MODEL_PATH` only needs setting
    for a custom/int8 model. `TTS_SID` selects the speaker, `TTS_SPEED` the
    rate.
-4. **Fallback**: if the model is missing or fails to load, `/api/tts` returns
+4. **Inference tuning**: `TTS_NUM_THREADS` (`auto` = the container's CPU
+   grant from cgroups, capped at 2; 1 on Linux when the grant can't be read).
+   Measured on an Apple M5: 1 thread ≈ 0.62× real time, 2 threads ≈ 0.39×.
+   Give the service ≥2 dedicated vCPUs to benefit; on a fractional CPU leave
+   it at `auto`. `TTS_CONCURRENCY` (1) inferences run at once;
+   `TTS_MAX_QUEUE` (8) may wait — beyond that `/api/tts` answers 503 with
+   `Retry-After: 1`. Waiting longer than `TTS_QUEUE_TIMEOUT_MS` (10s) or
+   inferring longer than `TTS_INFERENCE_TIMEOUT_MS` (20s) also answers 503,
+   and the client skips that chunk (or uses the browser voice if nothing has
+   played yet). `TTS_WARMUP=false` skips the one-inference warm-up at boot.
+5. **Health & logs**: `GET /api/tts/health` (no auth, no content) reports
+   load/warm state, threads, queue depth, counters and the last real-time
+   factor. Each synthesis logs one JSON line (`evt: "tts.synth"`) with ids,
+   text length, queue wait, inference and audio duration — never the text.
+6. **Fallback**: if the model is missing or fails to load, `/api/tts` returns
    503 and the client automatically uses the browser `speechSynthesis` voice —
    voice replies keep working, just lower quality.
 
 ### 512 MB RAM caveat (free tier)
 
-The FP32 Kokoro model (`kokoro-multi-lang-v1_0`, ~360 MB on disk) can use
-~450–650 MB resident RAM once loaded, which may exceed a Render free
-instance's 512 MB limit and get OOM-killed. If that happens:
+The FP32 Kokoro model (`kokoro-multi-lang-v1_0`, ~360 MB on disk) measured
+~600 MB of additional resident RAM once loaded (`npm run bench-tts -w server`
+prints it), which exceeds a Render free instance's 512 MB limit and gets
+OOM-killed. If that happens:
 
 - Switch to the **int8-quantized** Kokoro model (~half the RSS):
   ```bash

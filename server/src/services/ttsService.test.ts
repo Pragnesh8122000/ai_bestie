@@ -137,3 +137,33 @@ describe('resolveSpeed', () => {
     expect((await load({ TTS_SPEED: 'fast' })).resolveSpeed()).toBe(0.95);
   });
 });
+
+describe('resolveNumThreads', () => {
+  it('honours an explicit positive integer, capped at 8', async () => {
+    const mod = await load({});
+    expect(mod.resolveNumThreads('1')).toBe(1);
+    expect(mod.resolveNumThreads('3')).toBe(3);
+    expect(mod.resolveNumThreads('64')).toBe(8);
+  });
+
+  it("sizes 'auto' (and junk) from the CPU grant, between 1 and 2 threads", async () => {
+    const mod = await load({});
+    for (const raw of ['auto', '0', '-2', '1.5', 'lots']) {
+      const n = mod.resolveNumThreads(raw);
+      expect(n).toBeGreaterThanOrEqual(1);
+      expect(n).toBeLessThanOrEqual(2);
+      expect(n).toBe(Math.max(1, Math.min(2, Math.floor(mod.availableCpus()))));
+    }
+  });
+});
+
+describe('ttsStatus', () => {
+  it('reports queue and counters for the health endpoint without any text', async () => {
+    const mod = await load({});
+    const s = mod.ttsStatus();
+    expect(s.available).toBe(false);
+    expect(s.queue).toMatchObject({ active: 0, queued: 0 });
+    expect(s.counters).toEqual({ ok: 0, cancelled: 0, busy: 0, timeouts: 0, failures: 0 });
+    expect(JSON.stringify(s)).not.toMatch(/text"/);
+  });
+});

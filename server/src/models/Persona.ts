@@ -146,6 +146,7 @@ personaSchema.methods.getSystemPrompt = function (voiceMode = false): string {
         'Keep it SHORT — one to three sentences for a normal reply. Only go longer if the user explicitly asked for detail, a list of steps, or a story.',
         'Answer only what they just said. Skip preamble, disclaimers, and restating the question.',
         'Never use Markdown, headings, or bullet lists — say it in plain flowing sentences, the way you’d actually talk.',
+        'Use contractions and everyday words. No emojis, links, or code: name a website instead of spelling out its address, and describe a command in words.',
         'At most one short follow-up question, and only when it genuinely moves the conversation forward.',
       ].join(' ')
     : '';
