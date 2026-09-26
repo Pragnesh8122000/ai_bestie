@@ -117,6 +117,7 @@ export function startVoiceTurn(
   onLevel?: (level: number) => void,
   maxMs = DEFAULT_MAX_MS,
   onInterim?: (text: string) => void,
+  allowServerFallback = true,
 ): VoiceTurnSession {
   let cancelled = false;
   let recognition: ListenSession | null = null;
@@ -165,6 +166,10 @@ export function startVoiceTurn(
     }
 
     if (!shouldFallback) return { transcript: '', usedServerFallback: false };
+    if (!allowServerFallback) {
+      await capture.stop();
+      return { transcript: '', usedServerFallback: false };
+    }
     await wait(maxMs - (performance.now() - startedAt));
     const recording = await capture.stop();
     if (cancelled || recording.blob.size === 0) {

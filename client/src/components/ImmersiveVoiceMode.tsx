@@ -128,6 +128,7 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
           setMicLevel,
           undefined,
           isBargeIn ? handleInterim : undefined,
+          !isBargeIn,
         );
         sessionRef.current = session;
         session.promise
