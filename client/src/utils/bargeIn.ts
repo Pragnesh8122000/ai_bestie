@@ -19,6 +19,8 @@ export interface BargeInDetector {
 /**
  * Filters the two common false-positive barge-ins: a single unstable interim
  * token, and the recognizer transcribing the persona's own speaker output.
+ * Short words count as echo only when they end the reply, where the tail of
+ * the persona's audio overlaps the user's turn.
  * A lone word is re-checked on a timer, so it is accepted once it persists
  * even when the recognizer emits no further results.
  */
@@ -52,8 +54,11 @@ export function createBargeInDetector(
       return false;
     }
 
-    const spokenByAssistant = normalize(assistantText());
-    if (candidate.length >= 4 && ` ${spokenByAssistant} `.includes(` ${candidate} `)) {
+    const spokenByAssistant = ` ${normalize(assistantText())} `;
+    const isEcho =
+      spokenByAssistant.includes(` ${candidate} `) &&
+      (candidate.length >= 4 || spokenByAssistant.endsWith(` ${candidate} `));
+    if (isEcho) {
       firstCandidateAt = null;
       return false;
     }

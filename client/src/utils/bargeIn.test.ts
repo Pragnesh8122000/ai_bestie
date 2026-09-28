@@ -25,6 +25,18 @@ describe('barge-in detector', () => {
     expect(help.hear('help', true)).toBe(true);
   });
 
+  it('treats a short word ending the reply as echo, but not a short word elsewhere', () => {
+    const onAccept = vi.fn();
+    const detector = createBargeInDetector(() => 'No worries. How about you?', onAccept);
+    expect(detector.hear('you')).toBe(false);
+    expect(detector.hasPendingSpeech()).toBe(false);
+    expect(detector.hear('you', true)).toBe(false);
+    expect(onAccept).not.toHaveBeenCalled();
+
+    expect(detector.hear('no', true)).toBe(true);
+    expect(onAccept).toHaveBeenCalledTimes(1);
+  });
+
   it('requires one interim word to persist but accepts it when final', () => {
     let now = 100;
     const detector = createBargeInDetector(

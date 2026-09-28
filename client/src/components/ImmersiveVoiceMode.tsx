@@ -161,10 +161,10 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
           endProbeRef.current = () => {
             bargeIn.cancel();
             if (bargeAccepted || sessionRef.current !== session) return;
-            // The user started answering just as the persona finished: adopt
-            // the probe as this turn instead of dropping their first words.
+            // The user started answering just as the persona finished: keep
+            // the probe listening instead of dropping their first words. It is
+            // still unconfirmed, so its final transcript must pass the filter.
             if (bargeIn.hasPendingSpeech()) {
-              bargeAccepted = true;
               setIsListening(true);
               return;
             }
