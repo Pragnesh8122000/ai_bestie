@@ -55,4 +55,31 @@ describe('voice turn latency trace', () => {
     expect(info).toHaveBeenCalledTimes(1);
     info.mockRestore();
   });
+
+  it('publishes no console line, event, or performance measure in production builds', () => {
+    vi.stubEnv('DEV', false);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const measure = vi.spyOn(performance, 'measure');
+    const listener = vi.fn();
+    window.addEventListener('voice-turn-latency', listener);
+    try {
+      const trace = createVoiceTurnLatencyTrace({
+        captureStartedAt: 0,
+        speechEndedAt: 100,
+        transcriptReadyAt: 200,
+        usedServerFallback: false,
+      });
+      trace.markFirstLlmToken(300);
+      expect(trace.markFirstTtsAudio(400)?.speechToFirstAudioMs).toBe(300);
+
+      expect(info).not.toHaveBeenCalled();
+      expect(measure).not.toHaveBeenCalled();
+      expect(listener).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('voice-turn-latency', listener);
+      info.mockRestore();
+      measure.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
 });

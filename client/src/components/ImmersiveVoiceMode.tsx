@@ -5,6 +5,7 @@ import { usePersonaStore } from '../stores/personaStore';
 import { setTtsLevelListener, stopSpeaking } from '../utils/speech';
 import { startVoiceTurn, type VoiceTurnSession, type VoiceTurnTiming } from '../utils/voiceCapture';
 import { createBargeInDetector } from '../utils/bargeIn';
+import { TranscriptionRequestError } from '../api/transcription';
 import MessageContent from './MessageContent';
 import VoiceOrb from './VoiceOrb';
 
@@ -37,6 +38,7 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
   const [cycle, setCycle] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const sessionRef = useRef<VoiceTurnSession | null>(null);
+  const endProbeRef = useRef<(() => void) | null>(null);
   const mountedRef = useRef(true);
   const backRef = useRef<HTMLButtonElement>(null);
 
@@ -60,6 +62,7 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
         setIsListening(false);
         setMicLevel(0);
       } else {
+        setNotice(null);
         setCycle((current) => current + 1);
       }
       return next;
@@ -95,6 +98,17 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [exit, toggleMute]);
 
+  // A barge-in probe lives exactly as long as the persona is speaking. Other
+  // store updates mid-reply (the stream's `done`, a refreshed conversation)
+  // must not tear it down. Declared before the turn effect so a probe that
+  // ends here frees `sessionRef` before the idle listener is considered.
+  useEffect(() => {
+    if (avatarState === 'speaking') return;
+    const endProbe = endProbeRef.current;
+    endProbeRef.current = null;
+    endProbe?.();
+  }, [avatarState]);
+
   useEffect(() => {
     if (muted || turnPending || sessionRef.current || !activeConversation) return;
 
@@ -108,12 +122,10 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
     const isBargeIn = avatarState === 'speaking';
     if (!canStartIdle && !isBargeIn) return;
 
-    let effectSession: VoiceTurnSession | null = null;
     let bargeAccepted = !isBargeIn;
     const timer = setTimeout(
       () => {
         if (!mountedRef.current || sessionRef.current) return;
-        setNotice(null);
         let voiceTiming: VoiceTurnTiming | undefined;
         if (!isBargeIn) setIsListening(true);
 
@@ -125,41 +137,54 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
             [...messages].reverse().find((message) => message.role === 'assistant')?.content ?? ''
           );
         };
-        const acceptsBargeIn = createBargeInDetector(latestAssistantText);
-        const handleSpeech = (text: string, final = false) => {
-          if (bargeAccepted || !acceptsBargeIn(text, final)) return bargeAccepted;
+        const bargeIn = createBargeInDetector(latestAssistantText, () => {
+          if (!mountedRef.current || sessionRef.current !== session) return;
           bargeAccepted = true;
           // Speaking always takes priority: stop the persona's own audio and
           // the reply it's still generating, then keep listening on this same
           // recognition session so the words that triggered it aren't lost.
           useChatStore.getState().abortStream();
           setIsListening(true);
-          return true;
-        };
+        });
 
         const session = startVoiceTurn(
           setMicLevel,
           undefined,
-          isBargeIn ? (text) => handleSpeech(text) : undefined,
+          isBargeIn ? (text) => bargeIn.hear(text) : undefined,
           !isBargeIn,
           (timing) => {
             voiceTiming = timing;
           },
         );
-        effectSession = session;
         sessionRef.current = session;
+        if (isBargeIn) {
+          endProbeRef.current = () => {
+            bargeIn.cancel();
+            if (bargeAccepted || sessionRef.current !== session) return;
+            // The user started answering just as the persona finished: adopt
+            // the probe as this turn instead of dropping their first words.
+            if (bargeIn.hasPendingSpeech()) {
+              bargeAccepted = true;
+              setIsListening(true);
+              return;
+            }
+            sessionRef.current = null;
+            session.stop();
+          };
+        }
         session.promise
           .then(async ({ transcript, usedServerFallback }) => {
+            bargeIn.cancel();
             if (!mountedRef.current || sessionRef.current !== session) return;
             sessionRef.current = null;
             setIsListening(false);
             setMicLevel(0);
-            if (usedServerFallback) {
-              setNotice(
-                'Brave fallback: audio was sent to OpenAI for transcription. API usage may be billed.',
-              );
-            }
-            if (transcript && isBargeIn && !bargeAccepted && !handleSpeech(transcript, true)) {
+            setNotice(
+              usedServerFallback
+                ? 'Brave fallback: audio was sent to OpenAI for transcription. API usage may be billed.'
+                : null,
+            );
+            if (transcript && isBargeIn && !bargeAccepted && !bargeIn.hear(transcript, true)) {
               if (mountedRef.current) setCycle((value) => value + 1);
               return;
             }
@@ -171,6 +196,7 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
             if (mountedRef.current) setCycle((value) => value + 1);
           })
           .catch((error) => {
+            bargeIn.cancel();
             if (!mountedRef.current || sessionRef.current !== session) return;
             sessionRef.current = null;
             setIsListening(false);
@@ -182,10 +208,16 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
               setNotice(
                 error instanceof Error ? error.message : 'Voice input failed. Please try again.',
               );
-              // Permission, device, and external-transcription failures need a
-              // deliberate retry. Automatically opening the microphone again
-              // would loop permission prompts or repeated metered API calls.
-              setMuted(true);
+              // An over-long clip was rejected before any metered call, so the
+              // user can simply try again. Permission, device, and other
+              // external-transcription failures need a deliberate retry:
+              // reopening the microphone would loop permission prompts or
+              // repeated metered API calls.
+              if (error instanceof TranscriptionRequestError && error.status === 413) {
+                setCycle((value) => value + 1);
+              } else {
+                setMuted(true);
+              }
             } else if (mountedRef.current) {
               setCycle((value) => value + 1);
             }
@@ -194,16 +226,7 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
       isBargeIn ? 0 : 450,
     );
 
-    return () => {
-      clearTimeout(timer);
-      // A silent barge-in probe must not block the normal idle listener once
-      // TTS finishes. Keep an accepted interruption alive so it can capture the
-      // rest of the user's sentence on that same recognition session.
-      if (isBargeIn && !bargeAccepted && sessionRef.current === effectSession) {
-        sessionRef.current = null;
-        effectSession?.stop();
-      }
-    };
+    return () => clearTimeout(timer);
   }, [activeConversation, avatarState, cycle, isStreaming, muted, sendMessage, turnPending]);
 
   return (

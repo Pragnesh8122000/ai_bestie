@@ -102,40 +102,16 @@ const CONTINUATION_WORDS = new Set([
   'although',
   'an',
   'and',
-  'as',
-  'at',
   'because',
   'but',
-  'by',
-  'can',
-  'could',
   'for',
-  'from',
-  'if',
-  'in',
-  'may',
-  'might',
-  'must',
+  'my',
   'of',
-  'on',
   'or',
-  'should',
-  'so',
-  'that',
   'the',
-  'though',
   'to',
-  'when',
-  'where',
-  'which',
-  'while',
-  'who',
-  'whose',
-  'why',
-  'will',
   'with',
-  'without',
-  'would',
+  'your',
 ]);
 
 function looksUnfinished(text: string): boolean {
@@ -254,6 +230,34 @@ export function listenOnce(
     rejectTurn(new Error(message));
   };
 
+  // We — not the engine — decide how long a pause means "done talking". The
+  // window is measured from the last result, so it also bounds an attempt
+  // restarted after an early `onend` that never hears anything else.
+  const armSilenceCommit = () => {
+    if (commitTimer) clearTimeout(commitTimer);
+    const silenceMs = looksUnfinished(`${finalTranscript} ${lastInterim}`)
+      ? UNFINISHED_SILENCE_COMMIT_MS
+      : SILENCE_COMMIT_MS;
+    const sinceLastResult = lastResultAt === null ? 0 : performance.now() - lastResultAt;
+    commitTimer = setTimeout(
+      () => {
+        commitTimer = null;
+        stopRequested = true;
+        if (awaitingRestart) {
+          if (restartTimer) clearTimeout(restartTimer);
+          finish();
+          return;
+        }
+        try {
+          current?.stop();
+        } catch {
+          /* ignore */
+        }
+      },
+      Math.max(0, silenceMs - sinceLastResult),
+    );
+  };
+
   const startAttempt = () => {
     if (settled) return;
     awaitingRestart = false;
@@ -294,6 +298,7 @@ export function listenOnce(
       promotePendingInterim();
       awaitingRestart = true;
       restartTimer = setTimeout(startAttempt, RESTART_DELAY_MS);
+      armSilenceCommit();
     };
 
     recognition.onresult = (e) => {
@@ -318,19 +323,7 @@ export function listenOnce(
       lastInterim = interim;
       onInterim?.((finalTranscript + (interim ? ' ' + interim : '')).trim());
 
-      // We — not the engine — decide how long a pause means "done talking".
-      if (commitTimer) clearTimeout(commitTimer);
-      const silenceMs = looksUnfinished(`${finalTranscript} ${interim}`)
-        ? UNFINISHED_SILENCE_COMMIT_MS
-        : SILENCE_COMMIT_MS;
-      commitTimer = setTimeout(() => {
-        stopRequested = true;
-        try {
-          recognition.stop();
-        } catch {
-          /* ignore */
-        }
-      }, silenceMs);
+      armSilenceCommit();
     };
 
     recognition.onerror = (e) => {

@@ -45,12 +45,13 @@ check, not a production Whisper benchmark.
 3. first LLM token received by the client, and
 4. first TTS playback start.
 
-Each completed turn emits a `voice-turn-latency` browser event and a content-free
-`voice.turn.latency` console JSON line with the three stage durations and total. No transcript or
-reply text is included. This instrumentation is shared by Safari, Chrome, and the Brave fallback,
-so field traces identify the dominant stage rather than inferring it from the orb state.
+In development builds, each completed turn emits a `voice-turn-latency` browser event, a
+`performance.measure`, and a content-free `voice.turn.latency` console JSON line with the three
+stage durations and total. Production builds publish none of these. No transcript or reply text is
+included. This instrumentation is shared by Safari, Chrome, and the Brave fallback, so dev traces
+identify the dominant stage rather than inferring it from the orb state.
 
 Live Safari automation was not available through the required Chrome DevTools runner. Safari's
 event pattern is covered at the Web Speech API boundary (including premature final + `onend`), and
-the new runtime event provides the requested real Safari end-to-end number on the next device run;
+the dev-build event provides the requested real Safari end-to-end number on the next device run;
 this report does not invent a Safari hardware measurement.

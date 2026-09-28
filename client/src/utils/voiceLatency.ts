@@ -21,7 +21,9 @@ function elapsed(from: number, to: number): number {
   return Math.max(0, Math.round(to - from));
 }
 
+// Development-only diagnostic: production builds compute nothing observable.
 function publish(metrics: VoiceTurnLatencyMetrics, timing: VoiceTurnTiming, firstAudioAt: number) {
+  if (!import.meta.env.DEV) return;
   try {
     performance.measure(`voice-turn:${metrics.turnId}:speech-to-first-audio`, {
       start: timing.speechEndedAt,

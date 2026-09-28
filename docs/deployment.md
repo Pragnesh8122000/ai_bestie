@@ -59,6 +59,12 @@ disable that fallback. Audio is authenticated, held in memory, capped at 30
 seconds / 2 MiB, sent directly to OpenAI for transcription, and never logged or
 persisted by AI Bestie. Usage is billed to the configured OpenAI project.
 
+**Upgrade note:** the client now records fallback turns for up to 29.5 seconds.
+Any deployment that set `TRANSCRIPTION_MAX_DURATION_MS=12000` must raise it to
+`30000` or remove it (30000 is the default). Until it does, fallback turns
+longer than 12 seconds are rejected with 413; voice mode stays open and shows
+the error, but the user has to repeat themselves.
+
 **Not used:** Anthropic Claude, OpenAI chat generation, Voyage embeddings,
 Atlas Vector Search (needs M10+), or Redis/BullMQ workers.
 

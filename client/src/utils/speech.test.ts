@@ -655,16 +655,118 @@ describe('speech-to-text', () => {
 
     const session = speech.listenOnce('en-US');
     const firstAttempt = instance;
-    firstAttempt.onresult?.({ results: [result('I was hoping you could', true)] });
+    firstAttempt.onresult?.({ results: [result('I was hoping you could help me with', true)] });
     firstAttempt.onend?.();
 
     await vi.advanceTimersByTimeAsync(100);
     expect(instance).not.toBe(firstAttempt);
-    instance.onresult?.({ results: [result('help me plan the trip', true)] });
+    instance.onresult?.({ results: [result('planning the trip', true)] });
     instance.onend?.();
 
-    await expect(session.promise).resolves.toBe('I was hoping you could help me plan the trip');
+    await expect(session.promise).resolves.toBe(
+      'I was hoping you could help me with planning the trip',
+    );
   });
+
+  it('commits an unfinished final turn after the extended silence even when the restarted attempt hears nothing', async () => {
+    vi.useFakeTimers();
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+    };
+    await loadFreshModule();
+
+    const session = speech.listenOnce('en-US');
+    let resolved: string | undefined;
+    void session.promise.then((text) => {
+      resolved = text;
+    });
+    const firstAttempt = instance;
+    firstAttempt.onresult?.({ results: [result('I want to go to the', true)] });
+    firstAttempt.onend?.();
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(instance).not.toBe(firstAttempt);
+    const restarted = instance;
+
+    await vi.advanceTimersByTimeAsync(2_200);
+    expect(resolved).toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(200);
+    expect(restarted.stopped).toBe(true);
+    await expect(session.promise).resolves.toBe('I want to go to the');
+  });
+
+  it.each(['I think so', 'Yes you can', 'I love that', 'I will'])(
+    'resolves a complete short final turn (%s) at once instead of restarting',
+    async (phrase) => {
+      let instance!: FakeRecognition;
+      (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+        constructor() {
+          super();
+          instance = this;
+        }
+      };
+      await loadFreshModule();
+
+      const session = speech.listenOnce('en-US');
+      const firstAttempt = instance;
+      firstAttempt.onresult?.({ results: [result(phrase, true)] });
+      firstAttempt.onend?.();
+
+      await expect(session.promise).resolves.toBe(phrase);
+      expect(instance).toBe(firstAttempt);
+    },
+  );
+
+  it.each(['I think so', 'Yes you can'])(
+    'commits a complete short turn (%s) on the normal silence window',
+    async (phrase) => {
+      vi.useFakeTimers();
+      let instance!: FakeRecognition;
+      (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+        constructor() {
+          super();
+          instance = this;
+        }
+      };
+      await loadFreshModule();
+
+      const session = speech.listenOnce('en-US');
+      instance.onresult?.({ results: [result(phrase, false)] });
+      await vi.advanceTimersByTimeAsync(1_599);
+      expect(instance.stopped).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(instance.stopped).toBe(true);
+      await expect(session.promise).resolves.toBe(phrase);
+    },
+  );
+
+  it.each(['I went there and', 'Can you pass me the'])(
+    'gives a turn trailing a continuation word (%s) the extended window',
+    async (phrase) => {
+      vi.useFakeTimers();
+      let instance!: FakeRecognition;
+      (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+        constructor() {
+          super();
+          instance = this;
+        }
+      };
+      await loadFreshModule();
+
+      const session = speech.listenOnce('en-US');
+      instance.onresult?.({ results: [result(phrase, false)] });
+      await vi.advanceTimersByTimeAsync(1_600);
+      expect(instance.stopped).toBe(false);
+      await vi.advanceTimersByTimeAsync(800);
+      expect(instance.stopped).toBe(true);
+      await expect(session.promise).resolves.toBe(phrase);
+    },
+  );
 
   it('surfaces interim results while listening before the final one arrives', async () => {
     let instance!: FakeRecognition;
