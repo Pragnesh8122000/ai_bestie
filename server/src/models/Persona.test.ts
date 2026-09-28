@@ -80,6 +80,12 @@ describe('persona system prompt', () => {
     expect(prompt).toMatch(/never use markdown/i);
   });
 
+  it('keeps emojis, links and code out of spoken replies only', () => {
+    // The voice reads an emoji's name and a URL letter by letter.
+    expect(promptFor('friend', true)).toMatch(/no emojis, links, or code/i);
+    expect(promptFor('friend', false)).not.toMatch(/no emojis, links, or code/i);
+  });
+
   it('keeps every other layer intact in voice mode', () => {
     const prompt = promptFor('friend', true);
     expect(prompt).toContain('You are Sam');

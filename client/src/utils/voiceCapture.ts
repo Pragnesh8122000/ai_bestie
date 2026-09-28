@@ -4,6 +4,42 @@ import { isSTTSupported, listenOnce, type ListenSession } from './speech';
 // A turn cap, not a single recognition session's length — `listenOnce` now
 // restarts transparently across pauses, so this only bounds one whole turn.
 const DEFAULT_MAX_MS = 20_000;
+// The server rejects clips over TRANSCRIPTION_MAX_DURATION_MS (12s by
+// default) with 413. The fallback recording used to run for the full 20s turn
+// cap, so every Brave fallback clip was rejected; stay safely under the limit.
+const SERVER_CLIP_MAX_MS = 11_500;
+// Same pause length the browser recognizer path treats as "done talking".
+const END_OF_SPEECH_SILENCE_MS = 1_200;
+
+/**
+ * Energy-based end-of-turn detection for the recorded (server fallback) path,
+ * fed the analyser level (0..1) the orb already uses. Ends the turn after
+ * speech followed by `silenceMs` of quiet, so a short answer is uploaded in
+ * ~1s instead of after the whole recording window.
+ */
+export function createEndOfSpeechDetector({
+  speechLevel = 0.12,
+  silenceLevel = 0.06,
+  silenceMs = END_OF_SPEECH_SILENCE_MS,
+  minSpeechMs = 250,
+} = {}) {
+  let speechStartedAt: number | null = null;
+  let lastLoudAt = 0;
+  let heardSpeech = false;
+  return {
+    /** Feed one level sample; returns true once the speaker has finished. */
+    update(level: number, now: number): boolean {
+      if (level >= speechLevel) {
+        speechStartedAt ??= now;
+        lastLoudAt = now;
+        if (now - speechStartedAt >= minSpeechMs) heardSpeech = true;
+      } else if (level < silenceLevel && !heardSpeech) {
+        speechStartedAt = null; // a click or blip, not speech
+      }
+      return heardSpeech && level < silenceLevel && now - lastLoudAt >= silenceMs;
+    },
+  };
+}
 
 export interface VoiceTurnResult {
   transcript: string;
@@ -134,9 +170,17 @@ export function startVoiceTurn(
       };
     });
 
+  // Tracks the mic level for the fallback path's end-of-speech detection.
+  const endOfSpeech = createEndOfSpeechDetector();
+  let speakerFinished = false;
+  const levelSink = (level: number) => {
+    onLevel?.(level);
+    if (endOfSpeech.update(level, performance.now())) speakerFinished = true;
+  };
+
   const promise = (async (): Promise<VoiceTurnResult> => {
     const startedAt = performance.now();
-    capture = await startCapture(onLevel);
+    capture = await startCapture(levelSink);
     if (cancelled) {
       await capture.stop();
       return { transcript: '', usedServerFallback: false };
@@ -170,7 +214,11 @@ export function startVoiceTurn(
       await capture.stop();
       return { transcript: '', usedServerFallback: false };
     }
-    await wait(maxMs - (performance.now() - startedAt));
+    // Record until the speaker pauses, or the clip limit — whichever first.
+    const deadline = startedAt + Math.min(maxMs, SERVER_CLIP_MAX_MS);
+    while (!cancelled && !speakerFinished && performance.now() < deadline) {
+      await wait(Math.min(100, deadline - performance.now()));
+    }
     const recording = await capture.stop();
     if (cancelled || recording.blob.size === 0) {
       return { transcript: '', usedServerFallback: true };

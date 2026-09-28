@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stripForSpeech, takeSpeech } from './speechText';
+import { detectSpeechLanguage, stripForSpeech, takeSpeech } from './speechText';
 
 describe('stripForSpeech', () => {
   it('returns plain prose unchanged', () => {
@@ -291,5 +291,79 @@ describe('takeSpeech', () => {
     if (last) spoken.push(last);
 
     expect(spoken.join(' ').replace(/\s+/g, ' ')).toBe(reply);
+  });
+});
+
+// Normalization measured against the real Kokoro model: each of these was
+// audibly read out (emoji names, URLs letter by letter) before this pass.
+describe('stripForSpeech for the voice (emoji, URLs, abbreviations)', () => {
+  it('drops emoji instead of letting the voice read their names', () => {
+    expect(stripForSpeech("I'm here 😊")).toBe("I'm here");
+    expect(stripForSpeech('Proud of you 🎉🎉 truly!')).toBe('Proud of you truly!');
+  });
+
+  it('drops multi-part emoji: ZWJ sequences, skin tones and flags', () => {
+    expect(stripForSpeech('Team 👩‍💻 and 👍🏽 from 🇮🇳 here')).toBe('Team and from here');
+  });
+
+  it('keeps digits, # and * that emoji are built from', () => {
+    expect(stripForSpeech('Step 1️⃣ first')).toBe('Step 1 first');
+    expect(stripForSpeech('Room #4')).toBe('Room #4');
+  });
+
+  it('says only the site name for a bare URL', () => {
+    expect(stripForSpeech('Check https://www.example.com/some/long/path?x=1 for details.')).toBe(
+      'Check example.com for details.',
+    );
+    expect(stripForSpeech('See www.headspace.com.')).toBe('See headspace.com.');
+  });
+
+  it('handles emoji-only and empty-after-normalization text', () => {
+    expect(stripForSpeech('😊😊')).toBe('');
+  });
+
+  it('leaves currency, percentages and times to the voice, which already reads them well', () => {
+    // Measured: "$5", "50%", "3:30pm" and "&" produce the same audio length
+    // as their spelled-out forms, so rewriting them would only risk meaning.
+    expect(stripForSpeech('It costs $5, about 50% off, at 3:30pm & later.')).toBe(
+      'It costs $5, about 50% off, at 3:30pm & later.',
+    );
+  });
+});
+
+describe('sentence boundaries', () => {
+  it('does not end a sentence at a title abbreviation', () => {
+    const { speech, rest } = takeSpeech('Call Dr. Smith today. Then rest. ', false, 1);
+    expect(speech).toBe('Call Dr. Smith today.');
+    expect(rest.trim()).toBe('Then rest.');
+  });
+
+  it('does not end a sentence at e.g. or i.e.', () => {
+    const { speech } = takeSpeech('Try a walk, e.g. around the block. More soon. ', false, 1);
+    expect(speech).toBe('Try a walk, e.g. around the block.');
+  });
+
+  it('treats "etc." before a capital letter as a sentence end', () => {
+    const { speech } = takeSpeech('Pens, paper, etc. Then we go. ', false, 1);
+    expect(speech).toBe('Pens, paper, etc.');
+  });
+});
+
+describe('detectSpeechLanguage', () => {
+  it('detects Hindi (Devanagari) and Gujarati script', () => {
+    expect(detectSpeechLanguage('मुझे बहुत अच्छा लगा')).toBe('hi-IN');
+    expect(detectSpeechLanguage('મને ખૂબ ગમ્યું')).toBe('gu-IN');
+  });
+
+  it('treats English, romanized Hinglish, emoji and empty text as English', () => {
+    expect(detectSpeechLanguage('I am glad')).toBe('en');
+    expect(detectSpeechLanguage('mujhe bahut accha laga yaar')).toBe('en');
+    expect(detectSpeechLanguage('😊')).toBe('en');
+    expect(detectSpeechLanguage('')).toBe('en');
+  });
+
+  it('goes with the majority script in mixed text', () => {
+    expect(detectSpeechLanguage('Okay, मुझे बहुत अच्छा लगा यार')).toBe('hi-IN');
+    expect(detectSpeechLanguage('That is so बढ़िया, really great news')).toBe('en');
   });
 });

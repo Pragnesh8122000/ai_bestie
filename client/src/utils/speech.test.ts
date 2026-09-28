@@ -470,21 +470,20 @@ describe('inter-sentence gap', () => {
     ]);
   });
 
-  it('does not prefetch more than one chunk ahead', async () => {
-    // The server synthesizes under a mutex, so deeper queuing buys nothing and
-    // wastes CPU on audio a stop would discard.
+  it('prefetches at most two chunks beyond the one playing', async () => {
+    // The server synthesizes one request at a time, so a second queued
+    // request keeps it busy while a short chunk plays (banking time for a
+    // longer one later — ~2.9s less mid-reply silence on the long benchmark
+    // reply). Deeper than that only synthesizes audio a stop would discard.
     const events = installTimedTts(40, 200);
     await loadFreshModule();
 
     speech.beginSpeech();
-    speech.speakChunk('One.');
-    speech.speakChunk('Two.');
-    speech.speakChunk('Three.');
-    speech.speakChunk('Four.');
+    for (const s of ['One.', 'Two.', 'Three.', 'Four.', 'Five.']) speech.speakChunk(s);
     await flush(150); // chunk 1 still playing
 
     const started = events.filter((e) => e.kind === 'fetch-start').length;
-    expect(started).toBeLessThanOrEqual(2);
+    expect(started).toBe(3); // playing + two ahead, not all five
   });
 
   it('discards a prefetched chunk when speech is stopped', async () => {
@@ -546,9 +545,11 @@ describe('inter-sentence gap', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => {
-        call++;
+        // Capture this request's number before awaiting: with two chunks in
+        // flight, `call` has already moved on by the time this one settles.
+        const n = ++call;
         await new Promise((r) => setTimeout(r, 20));
-        if (call === 2) throw new Error('network');
+        if (n === 2) throw new Error('network');
         return { ok: true, blob: async () => ({ size: 1024 }) };
       }),
     );

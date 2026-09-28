@@ -20,6 +20,26 @@
 /** A fenced code block, spoken as a short placeholder rather than read out. */
 const CODE_BLOCK_SPOKEN = 'code block';
 
+/** A bare http(s)/www URL, excluding trailing sentence punctuation. */
+const BARE_URL = /\b(?:https?:\/\/|www\.)[^\s<>()[\]]*[^\s<>()[\].,;:!?'"]/gi;
+
+/**
+ * Pictographic emoji plus the pieces that compose them (ZWJ, variation
+ * selector 16, keycap, skin tones, regional-indicator flags). Digits, `#` and
+ * `*` are deliberately not matched, so "1️⃣" still says "1".
+ */
+const EMOJI =
+  /[\p{Extended_Pictographic}\p{Emoji_Modifier}\u{1F1E6}-\u{1F1FF}]|\u{FE0F}|\u{200D}|\u{20E3}/gu;
+
+/** "https://www.example.com/a?b" -> "example.com" (espeak says "example dot com"). */
+function spokenHost(url: string): string {
+  const host = url
+    .replace(/^https?:\/\//i, '')
+    .replace(/^www\./i, '')
+    .split(/[/?#:]/)[0];
+  return host || 'the link';
+}
+
 /**
  * Convert Markdown source into plain speakable text.
  *
@@ -50,6 +70,15 @@ export function stripForSpeech(md: string): string {
   // Reference-style and bare autolinks.
   out = out.replace(/\[([^\]]*)\]\[[^\]]*\]/g, '$1');
   out = out.replace(/<(https?:\/\/[^>\s]+)>/g, ' ');
+  // A bare URL is read character by character — measured 7.2s of audio for
+  // "Check https://example.com/some/long/path?x=1 for details." versus 1.5s
+  // for the same sentence without it. Say just the site name.
+  out = out.replace(BARE_URL, (url) => spokenHost(url));
+
+  // Emoji are spoken as their Unicode names by the Kokoro/espeak front end
+  // ("I'm here 😊" measured 2.4s vs 0.8s without it). Drop them, along with
+  // the joiners, variation selectors and skin-tone modifiers that build them.
+  out = out.replace(EMOJI, '');
 
   // Tables: drop the |---|:---| separator rows, then turn cell pipes into
   // pauses so a row reads as a list instead of "pipe walk pipe low pipe".
@@ -106,7 +135,7 @@ export function stripForSpeech(md: string): string {
 /** Hold at least this many completed sentences before speaking (prosody). */
 export const SENTENCES_PER_CHUNK = 2;
 /** Speak sooner than a sentence boundary once the buffer gets this long. */
-const MAX_CHUNK_CHARS = 280;
+export const MAX_CHUNK_CHARS = 280;
 
 const SENTENCE_END = /[.!?…]/;
 
@@ -183,7 +212,7 @@ export function takeSpeech(
  * `forced` marks a unit that was cut at the size budget rather than at a
  * natural boundary, which tells the caller to stop accumulating and speak.
  */
-function nextUnit(raw: string, flush: boolean): { text: string; forced: boolean } | null {
+export function nextUnit(raw: string, flush: boolean): { text: string; forced: boolean } | null {
   const natural = (text: string) => ({ text, forced: false });
 
   // An entire fenced block is one unit: its interior has no meaningful
@@ -235,6 +264,9 @@ function findSentenceEnd(raw: string, limit: number): number {
 
     // "1." / "2)" at the start of a line is a list marker, not a sentence.
     if (ch === '.' && isListMarker(raw, i)) continue;
+    // "Dr. Smith" / "e.g. a walk" — cutting there splits one sentence into
+    // two requests, and each resets the voice's intonation mid-thought.
+    if (ch === '.' && isAbbreviation(raw, i)) continue;
 
     // Consume a run of terminators ("...", "?!") as one.
     let end = i;
@@ -242,6 +274,37 @@ function findSentenceEnd(raw: string, limit: number): number {
     return end;
   }
   return -1;
+}
+
+// Titles and Latin abbreviations whose period never ends a sentence.
+const NON_TERMINAL_ABBREVIATIONS = new Set([
+  'mr',
+  'mrs',
+  'ms',
+  'dr',
+  'prof',
+  'sr',
+  'jr',
+  'vs',
+  'e.g',
+  'i.e',
+]);
+
+/**
+ * True when the period at `dot` belongs to an abbreviation. "etc." is only an
+ * abbreviation mid-sentence ("pens, etc. are fine"); before a capital it
+ * usually ends the sentence too, so it is treated as a boundary there.
+ */
+function isAbbreviation(raw: string, dot: number): boolean {
+  let start = dot;
+  while (start > 0 && /[A-Za-z.]/.test(raw[start - 1])) start--;
+  const word = raw.slice(start, dot).toLowerCase();
+  if (NON_TERMINAL_ABBREVIATIONS.has(word)) return true;
+  if (word === 'etc') {
+    const next = raw.slice(dot + 1).match(/\S/);
+    return !!next && next[0] !== next[0].toUpperCase();
+  }
+  return false;
 }
 
 /** True when the period at `dot` closes an ordered-list number at line start. */
@@ -255,4 +318,20 @@ function isListMarker(raw: string, dot: number): boolean {
   if (digits === 0) return false;
   while (i >= 0 && (raw[i] === ' ' || raw[i] === '\t')) i--;
   return i < 0 || raw[i] === '\n';
+}
+
+/**
+ * The language a chunk should be spoken in, from its script: "hi-IN" for
+ * Devanagari, "gu-IN" for Gujarati, otherwise "en". Romanized Hindi
+ * ("Hinglish") is Latin script and is indistinguishable from English here —
+ * it stays on the English voice, which reads it with English phonetics.
+ */
+export function detectSpeechLanguage(text: string): 'en' | 'hi-IN' | 'gu-IN' {
+  const count = (re: RegExp) => (text.match(re) || []).length;
+  const devanagari = count(/\p{Script=Devanagari}/gu);
+  const gujarati = count(/\p{Script=Gujarati}/gu);
+  const latin = count(/\p{Script=Latin}/gu);
+  if (devanagari > latin && devanagari >= gujarati) return 'hi-IN';
+  if (gujarati > latin) return 'gu-IN';
+  return 'en';
 }

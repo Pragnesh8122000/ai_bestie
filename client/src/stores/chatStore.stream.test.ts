@@ -324,6 +324,26 @@ describe('sendMessage', () => {
   });
 });
 
+async function expectFirstChunk(tokens: string[], first: string) {
+  useChatStore.setState({
+    conversations: [conversation('a')],
+    activeConversation: { ...conversation('a'), messages: [] },
+    activeConversationId: 'a',
+    ttsEnabled: true,
+  });
+  api.streamMessage.mockResolvedValue(
+    sseResponse([
+      ...tokens.map((content) => ({ type: 'token', content })),
+      { type: 'done', messageId: 'm1' },
+    ]),
+  );
+  const { speakChunk } = await import('../utils/speech');
+  await useChatStore.getState().sendMessage('Hello Sam');
+  const calls = (speakChunk as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0]);
+  expect(calls[0]).toBe(first);
+  expect(calls.join(' ')).toBe(tokens.join('').trim());
+}
+
 describe('sendMessage voice replies', () => {
   it('speaks after the first sentence instead of waiting for the reply to finish, when voice replies are on', async () => {
     useChatStore.setState({
@@ -334,7 +354,7 @@ describe('sendMessage voice replies', () => {
     });
     api.streamMessage.mockResolvedValue(
       sseResponse([
-        { type: 'token', content: 'One thing. ' },
+        { type: 'token', content: 'I am so glad you told me. ' },
         // Only one sentence has landed so far — the reply is still streaming.
         { type: 'token', content: 'Two more words' },
         { type: 'done', messageId: 'm1' },
@@ -346,12 +366,16 @@ describe('sendMessage voice replies', () => {
 
     // The first sentence must have gone out on its own call, before the
     // reply finished streaming — not batched with the rest at the end.
-    expect(speakChunk).toHaveBeenCalledWith('One thing.');
-    const firstCallIndex = (speakChunk as ReturnType<typeof vi.fn>).mock.calls.findIndex(
-      (call) => call[0] === 'One thing.',
-    );
-    expect(firstCallIndex).toBe(0);
+    const calls = (speakChunk as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0]);
+    expect(calls[0]).toBe('I am so glad you told me.');
+    expect(calls).toContain('Two more words');
   });
+
+  it('merges a one-word opener with the next sentence so the voice does not stall after it', () =>
+    expectFirstChunk(
+      ['Yes! ', 'That sounds really good to me. ', 'Want to talk?'],
+      'Yes! That sounds really good to me.',
+    ));
 
   it('reliably speaks a short, single-sentence reply once it completes', async () => {
     useChatStore.setState({

@@ -1,19 +1,25 @@
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import { OfflineTts, GenerationConfig, type GeneratedAudio } from 'sherpa-onnx-node';
 import { config } from '../config';
 import { AppError } from '../utils/errors';
+import { TtsQueue } from './ttsQueue';
+import { speakableText } from './ttsText';
 
 /**
- * In-process neural TTS via sherpa-onnx (Kokoro English v0_19). Runs inside the
- * Express server — no sidecar, no second always-on service — so the app stays
- * within the Render free process-hour budget.
+ * In-process neural TTS via sherpa-onnx (Kokoro v1.0 by default, v0_19
+ * optional). Runs inside the Express server — no sidecar, no second always-on
+ * service — so the app stays within the Render free process-hour budget.
  *
- * The model is loaded once (lazily on first use / boot) as a process-wide
- * singleton. Synthesis uses `generateAsync` (not the synchronous `generate`),
- * which runs inference on the addon's internal worker thread so the event
- * loop stays free — an in-flight chat SSE stream's heartbeat keeps firing
- * while a sentence is being synthesized.
+ * The model is loaded once at boot as a process-wide singleton and warmed
+ * with one short inference. Synthesis uses `generateAsync` (not the
+ * synchronous `generate`), which runs inference on the addon's worker thread
+ * so the event loop stays free — measured: the event loop never lagged more
+ * than ~30ms during inference, so a chat SSE stream's heartbeat keeps firing.
+ * Inference goes through a bounded queue (ttsQueue.ts) with queue-wait and
+ * inference timeouts, so load or a stuck call surfaces as a fast 503 instead
+ * of an ever-growing backlog.
  *
  * NOTE: we deliberately do NOT pass `onProgress` to `generateAsync`. In
  * sherpa-onnx-node 1.13.x the streaming-progress path hard-crashes the whole
@@ -32,6 +38,13 @@ let tts: OfflineTts | null = null;
 let loadAttempted = false;
 let loadError: string | null = null;
 let loadingPromise: Promise<void> | null = null;
+let warm = false;
+let loadMs: number | null = null;
+
+// Counters for /api/tts/health — process lifetime, never any text.
+const counters = { ok: 0, cancelled: 0, busy: 0, timeouts: 0, failures: 0 };
+let lastInferMs: number | null = null;
+let lastRtf: number | null = null;
 
 /**
  * Speaker ids differ per Kokoro release, so the allow-list is per version.
@@ -91,6 +104,48 @@ export function resolveSpeed(): number {
 
 const VOICE_SPEED = resolveSpeed();
 
+/** CPUs this process may use: the cgroup quota on Linux, else the machine's. */
+export function availableCpus(): number {
+  if (process.platform !== 'linux') return os.availableParallelism();
+  try {
+    // cgroup v2: "max 100000" (no limit) or "<quota> <period>".
+    const [quota, period] = fs.readFileSync('/sys/fs/cgroup/cpu.max', 'utf8').trim().split(/\s+/);
+    if (quota === 'max') return os.availableParallelism();
+    return Number(quota) / Number(period);
+  } catch {
+    /* not cgroup v2 */
+  }
+  try {
+    const quota = Number(fs.readFileSync('/sys/fs/cgroup/cpu/cpu.cfs_quota_us', 'utf8'));
+    const period = Number(fs.readFileSync('/sys/fs/cgroup/cpu/cpu.cfs_period_us', 'utf8'));
+    return quota > 0 ? quota / period : os.availableParallelism();
+  } catch {
+    // Unknown container budget: ONNX Runtime would size itself from the
+    // host's cores, which oversubscribes a small CPU share. Stay at one.
+    return 1;
+  }
+}
+
+/**
+ * ONNX Runtime intra-op threads. TTS_NUM_THREADS wins when it is a positive
+ * integer (capped at 8); 'auto' uses the CPU grant, capped at 2 — measured on
+ * an M5, 2 threads cut inference from 0.62x to 0.39x real time and 4 threads
+ * only to 0.30-0.43x while taking cores from the event loop and other users.
+ */
+export function resolveNumThreads(raw: string = config.tts.numThreads): number {
+  const n = Number(raw);
+  if (raw !== 'auto' && Number.isInteger(n) && n >= 1) return Math.min(n, 8);
+  return Math.max(1, Math.min(2, Math.floor(availableCpus())));
+}
+
+const NUM_THREADS = resolveNumThreads();
+
+const queue = new TtsQueue(
+  config.tts.concurrency,
+  config.tts.maxQueue,
+  config.tts.queueTimeoutMs,
+);
+
 function modelFilesPresent(): boolean {
   const dir = config.tts.modelDir;
   return (
@@ -127,6 +182,7 @@ export async function initTts(): Promise<void> {
         return;
       }
       const dir = config.tts.modelDir;
+      const startedAt = Date.now();
       tts = await OfflineTts.createAsync({
         model: {
           kokoro: {
@@ -137,7 +193,7 @@ export async function initTts(): Promise<void> {
             ...(lexiconPath() ? { lexicon: lexiconPath()! } : {}),
           },
           debug: false,
-          numThreads: 1,
+          numThreads: NUM_THREADS,
           provider: 'cpu',
         },
         // No maxNumSentences: the addon logs "max_num_sentences != 1 is
@@ -147,6 +203,9 @@ export async function initTts(): Promise<void> {
         // *caller* sending multiple sentences per request, not this option —
         // see chatStore.ts's sentence-batching before speakChunk().
       });
+      loadMs = Date.now() - startedAt;
+      if (config.tts.warmup) void warmUp();
+      else warm = true;
     } catch (e) {
       loadError = (e as Error).message;
       tts = null;
@@ -158,6 +217,30 @@ export async function initTts(): Promise<void> {
   return loadingPromise;
 }
 
+/**
+ * One short inference through the normal queue, so the first real reply
+ * doesn't pay first-run costs (espeak data load, ONNX Runtime allocations).
+ * Measured ~50-130ms saved on the first chunk on an M5; more on a cold
+ * container. Queued first, so a real request waits at most one short job.
+ */
+async function warmUp(): Promise<void> {
+  if (!tts) return;
+  const startedAt = Date.now();
+  try {
+    await queue.run(() =>
+      tts!.generateAsync({
+        text: 'Hi.',
+        generationConfig: new GenerationConfig({ sid: VOICE_SID, speed: VOICE_SPEED }),
+      }),
+    );
+    logTts({ evt: 'tts.warmup', outcome: 'ok', inferMs: Date.now() - startedAt });
+  } catch (e) {
+    logTts({ evt: 'tts.warmup', outcome: 'error', errorCategory: (e as Error).name });
+  } finally {
+    warm = true;
+  }
+}
+
 export interface TtsStatus {
   available: boolean;
   error: string | null;
@@ -165,6 +248,13 @@ export interface TtsStatus {
   sid: number;
   speed: number;
   modelVersion: string;
+  numThreads: number;
+  warm: boolean;
+  loadMs: number | null;
+  queue: ReturnType<TtsQueue['stats']>;
+  counters: typeof counters;
+  lastInferMs: number | null;
+  lastRtf: number | null;
 }
 
 export function ttsStatus(): TtsStatus {
@@ -175,50 +265,136 @@ export function ttsStatus(): TtsStatus {
     sid: VOICE_SID,
     speed: VOICE_SPEED,
     modelVersion: config.tts.modelVersion,
+    numThreads: NUM_THREADS,
+    warm,
+    loadMs,
+    queue: queue.stats(),
+    counters: { ...counters },
+    lastInferMs,
+    lastRtf,
   };
 }
 
-// Serialize synthesis so concurrent requests don't interleave on the CPU. One
-// sentence at a time is fine for a single-user free deployment; the limiter
-// and this mutex together bound queue depth.
-let chain: Promise<unknown> = Promise.resolve();
-function enqueue(task: () => Promise<GeneratedAudio>): Promise<GeneratedAudio> {
-  // Run the task whether the previous one resolved or rejected, so one bad
-  // request can't stall the whole queue.
-  const result = chain.then(task, task);
-  chain = result.then(
-    () => undefined,
-    () => undefined,
-  );
-  return result;
+/** Correlation ids for one request's log line. Never the text itself. */
+export interface TtsLogContext {
+  reqId?: string;
+  generation?: string;
+  chunk?: string;
+  lang?: string;
 }
 
 /**
- * Synthesize `text` to a 16-bit mono PCM WAV Buffer. Throws AppError(503) if
- * the model is unavailable. The AbortSignal cancels mid-synthesis.
+ * One structured JSON line per synthesis (skipped under test). Contains
+ * sizes and timings only — never the text or audio, which are the user's
+ * private conversation.
  */
-export async function synthesize(text: string, signal: AbortSignal): Promise<Buffer> {
+export function logTts(fields: Record<string, unknown>): void {
+  if (process.env.NODE_ENV === 'test' || process.env.VITEST) return;
+  console.log(JSON.stringify({ ts: new Date().toISOString(), provider: 'kokoro', ...fields }));
+}
+
+export class TtsTimeoutError extends Error {
+  constructor() {
+    super('TTS inference timed out');
+    this.name = 'TtsTimeoutError';
+  }
+}
+
+export interface SynthesisResult {
+  wav: Buffer;
+  audioMs: number;
+  queueWaitMs: number;
+  inferMs: number;
+}
+
+/**
+ * Synthesize `text` to a 16-bit mono PCM WAV. Throws AppError(503) if the
+ * model is unavailable, TtsBusyError / TtsQueueTimeoutError / TtsTimeoutError
+ * under load, and TtsCancelledError once `signal` fires — a request whose
+ * client has gone is dropped from the queue before it reaches the model.
+ */
+export async function synthesize(
+  text: string,
+  signal: AbortSignal,
+  ctx: TtsLogContext = {},
+): Promise<SynthesisResult> {
   await initTts();
   if (!tts) throw new AppError('TTS unavailable', 503);
 
-  const trimmed = text.trim();
-  if (!trimmed) throw new AppError('Nothing to synthesize', 400);
-  if (signal.aborted) throw new AppError('TTS cancelled', 499);
+  const trimmed = speakableText(text);
+  if (!text.trim()) throw new AppError('Nothing to synthesize', 400);
+  const model = tts;
+  const base = {
+    evt: 'tts.synth',
+    ...ctx,
+    model: config.tts.modelVersion,
+    voice: VOICE_SID,
+    textLen: text.length,
+  };
 
-  const audio = await enqueue(() =>
-    // No onProgress: see the module header — the addon's progress path crashes
-    // the process. Every chunk uses the same pinned female speaker id.
-    tts!.generateAsync({
-      text: trimmed,
-      generationConfig: new GenerationConfig({
-        sid: VOICE_SID,
-        speed: VOICE_SPEED,
-      }),
-    }),
-  );
+  // Emoji-only (or similar) input: answer with a moment of silence rather
+  // than an error, so the client doesn't treat it as a failed engine.
+  if (!trimmed) return { wav: encodeWav(new Float32Array(1200), 24_000), audioMs: 50, queueWaitMs: 0, inferMs: 0 };
 
-  if (signal.aborted) throw new AppError('TTS cancelled', 499);
-  return encodeWav(audio.samples, audio.sampleRate);
+  const requestedAt = Date.now();
+  let queueWaitMs = 0;
+  let startedAt = 0;
+  try {
+    const { value: audio } = await new Promise<{ value: GeneratedAudio; waitMs: number }>(
+      (resolve, reject) => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        queue
+          .run(
+            () => {
+              // Re-check at dequeue: the client may have left while waiting.
+              if (signal.aborted) return Promise.reject(new AppError('TTS cancelled', 499));
+              // No onProgress: see the module header — the addon's progress
+              // path crashes the process. Every chunk uses the same pinned
+              // female speaker id.
+              return model.generateAsync({
+                text: trimmed,
+                generationConfig: new GenerationConfig({ sid: VOICE_SID, speed: VOICE_SPEED }),
+              });
+            },
+            {
+              signal,
+              onStart: (waitMs) => {
+                queueWaitMs = waitMs;
+                startedAt = Date.now();
+                timer = setTimeout(() => reject(new TtsTimeoutError()), config.tts.inferenceTimeoutMs);
+              },
+            },
+          )
+          .then(resolve, reject)
+          .finally(() => clearTimeout(timer));
+      },
+    );
+
+    const inferMs = Date.now() - startedAt;
+    const audioMs = Math.round((audio.samples.length / audio.sampleRate) * 1000);
+    if (signal.aborted) throw new AppError('TTS cancelled', 499);
+    counters.ok++;
+    lastInferMs = inferMs;
+    lastRtf = audioMs ? +(inferMs / audioMs).toFixed(3) : null;
+    logTts({ ...base, outcome: 'ok', queueWaitMs, inferMs, audioMs, rtf: lastRtf });
+    return { wav: encodeWav(audio.samples, audio.sampleRate), audioMs, queueWaitMs, inferMs };
+  } catch (e) {
+    const name = (e as Error).name;
+    const cancelled = name === 'TtsCancelledError' || (e instanceof AppError && e.statusCode === 499);
+    if (cancelled) counters.cancelled++;
+    else if (name === 'TtsBusyError') counters.busy++;
+    else if (name === 'TtsTimeoutError' || name === 'TtsQueueTimeoutError') counters.timeouts++;
+    else counters.failures++;
+    logTts({
+      ...base,
+      outcome: cancelled ? 'cancelled' : 'error',
+      errorCategory: cancelled ? 'cancelled' : name,
+      // Jobs that never left the queue report how long they waited in it.
+      queueWaitMs: startedAt ? queueWaitMs : Date.now() - requestedAt,
+      inferMs: startedAt ? Date.now() - startedAt : 0,
+    });
+    throw e;
+  }
 }
 
 /** Build a 44-byte-header WAV (mono, 16-bit PCM) from float32 samples. */

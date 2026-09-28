@@ -13,7 +13,7 @@ vi.mock('../api/transcription', () => ({
   transcribeVoiceClip: (...args: unknown[]) => transcribeVoiceClip(...args),
 }));
 
-import { startVoiceTurn } from './voiceCapture';
+import { createEndOfSpeechDetector, startVoiceTurn } from './voiceCapture';
 
 class FakeMediaRecorder {
   static isTypeSupported = () => true;
@@ -167,5 +167,50 @@ describe('voice turn capture', () => {
     expect(recognitionStop).toHaveBeenCalledTimes(1);
     expect(stopTrack).toHaveBeenCalledTimes(1);
     expect(transcribeVoiceClip).not.toHaveBeenCalled();
+  });
+
+  it('keeps the fallback recording under the server clip limit even with the 20s turn cap', async () => {
+    // The server rejects clips over 12s (413). Recording the full 20s turn
+    // made every Brave fallback clip fail.
+    vi.useFakeTimers();
+    isSTTSupported.mockReturnValue(true);
+    listenOnce.mockReturnValue({ promise: Promise.reject(new Error('network')), stop: vi.fn() });
+
+    const result = startVoiceTurn().promise;
+    await vi.runAllTimersAsync();
+    await result;
+
+    const [, duration] = transcribeVoiceClip.mock.calls[0];
+    expect(duration).toBeLessThanOrEqual(12_000);
+  });
+});
+
+describe('end-of-speech detection for the recorded fallback', () => {
+  it('ends the turn after speech followed by a pause', () => {
+    const d = createEndOfSpeechDetector();
+    let t = 0;
+    for (; t < 800; t += 50) expect(d.update(0.3, t)).toBe(false); // talking
+    for (; t < 800 + 1150; t += 50) expect(d.update(0.02, t)).toBe(false); // short pause
+    expect(d.update(0.02, 800 + 1250)).toBe(true);
+  });
+
+  it('never ends a turn before any speech was heard', () => {
+    const d = createEndOfSpeechDetector();
+    for (let t = 0; t < 5000; t += 50) expect(d.update(0.01, t)).toBe(false);
+  });
+
+  it('ignores a click or blip shorter than real speech', () => {
+    const d = createEndOfSpeechDetector();
+    d.update(0.5, 0);
+    d.update(0.5, 100); // 100ms burst
+    for (let t = 150; t < 3000; t += 50) expect(d.update(0.01, t)).toBe(false);
+  });
+
+  it('keeps listening through a mid-sentence breath', () => {
+    const d = createEndOfSpeechDetector();
+    let t = 0;
+    for (; t < 600; t += 50) d.update(0.3, t);
+    for (; t < 1200; t += 50) expect(d.update(0.02, t)).toBe(false); // 600ms breath
+    for (; t < 1800; t += 50) expect(d.update(0.3, t)).toBe(false); // talking again
   });
 });
