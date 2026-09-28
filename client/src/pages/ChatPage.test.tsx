@@ -402,6 +402,57 @@ describe('ChatPage drawer', () => {
     expect(api.streamMessage).not.toHaveBeenCalled();
   });
 
+  it('interrupts and sends a final-only barge-in that resolves while the persona is still streaming', async () => {
+    let resolveProbe: (value: {
+      transcript: string;
+      usedServerFallback: boolean;
+    }) => void = () => {};
+    vi.mocked(startVoiceTurn)
+      .mockImplementationOnce(() => ({
+        promise: new Promise((resolve) => {
+          resolveProbe = resolve;
+        }),
+        stop: vi.fn(),
+      }))
+      .mockImplementation(() => ({ promise: new Promise(() => {}), stop: vi.fn() }));
+    api.streamMessage.mockResolvedValue({
+      ok: true,
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              `data: ${JSON.stringify({ type: 'done', messageId: 'm2' })}\n\n`,
+            ),
+          );
+          controller.close();
+        },
+      }),
+    });
+    render(<ChatPage />, { wrapper: MemoryRouter });
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole('button', { name: 'Start voice chat' })[1]);
+    });
+
+    act(() => {
+      useChatStore.setState({
+        avatarState: 'speaking',
+        isStreaming: true,
+        streamingContent: 'Here is a long plan for the whole weekend',
+      });
+    });
+    await waitFor(() => expect(startVoiceTurn).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      resolveProbe({ transcript: 'stop', usedServerFallback: false });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(stopSpeaking).toHaveBeenCalled();
+    await waitFor(() =>
+      expect(api.streamMessage).toHaveBeenCalledWith('a', 'stop', expect.anything(), true),
+    );
+  });
+
   it('stops a silent barge-in probe when the persona finishes, then listens normally', async () => {
     const probeStop = vi.fn();
     vi.mocked(startVoiceTurn)

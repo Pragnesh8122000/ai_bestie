@@ -176,6 +176,8 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
           .then(async ({ transcript, usedServerFallback }) => {
             bargeIn.cancel();
             if (!mountedRef.current || sessionRef.current !== session) return;
+            const rejected =
+              Boolean(transcript) && isBargeIn && !bargeAccepted && !bargeIn.hear(transcript, true);
             sessionRef.current = null;
             setIsListening(false);
             setMicLevel(0);
@@ -184,8 +186,8 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
                 ? 'Brave fallback: audio was sent to OpenAI for transcription. API usage may be billed.'
                 : null,
             );
-            if (transcript && isBargeIn && !bargeAccepted && !bargeIn.hear(transcript, true)) {
-              if (mountedRef.current) setCycle((value) => value + 1);
+            if (rejected) {
+              setCycle((value) => value + 1);
               return;
             }
             if (transcript) {
