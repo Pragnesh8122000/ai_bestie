@@ -155,9 +155,10 @@ function looksUnfinished(text: string): boolean {
  *    own silence timer AND the last text is interim or visibly unfinished —
  *    including WebKit promoting an incomplete phrase to "final" — a fresh
  *    attempt starts immediately and keeps accumulating into the same turn.
- *  - An attempt that ends with zero results at all (nothing heard since the
- *    last attempt started), or whose final text looks complete, resolves at
- *    once. This keeps clean short utterances free of added latency.
+ *  - A turn that has heard nothing at all, or whose final text looks
+ *    complete, resolves at once. This keeps clean short utterances free of
+ *    added latency. A restarted attempt that ends empty restarts again; the
+ *    silence window measured from the last result still bounds the turn.
  *
  * Returns a `stop()` handle alongside the promise so a caller can end the
  * turn early (e.g. on component unmount) without treating that as an error —
@@ -261,7 +262,6 @@ export function listenOnce(
   const startAttempt = () => {
     if (settled) return;
     awaitingRestart = false;
-    let gotAnyResult = false;
     let lastResultWasFinal = false;
     let attemptEnded = false;
     const recognition = new Ctor();
@@ -288,7 +288,11 @@ export function listenOnce(
         commitTimer = null;
       }
       const transcript = `${finalTranscript} ${lastInterim}`.trim();
-      if (stopRequested || !gotAnyResult || (lastResultWasFinal && !looksUnfinished(transcript))) {
+      if (
+        stopRequested ||
+        lastResultAt === null ||
+        (lastResultWasFinal && !looksUnfinished(transcript))
+      ) {
         finish();
         return;
       }
@@ -302,7 +306,6 @@ export function listenOnce(
     };
 
     recognition.onresult = (e) => {
-      gotAnyResult = true;
       lastResultAt = performance.now();
       lastResultWasFinal = e.results.length > 0 && !!e.results[e.results.length - 1].isFinal;
       let interim = '';

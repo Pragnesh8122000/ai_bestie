@@ -700,6 +700,71 @@ describe('speech-to-text', () => {
     await expect(session.promise).resolves.toBe('I want to go to the');
   });
 
+  it('keeps an unfinished turn open when the restarted attempt ends empty inside the extended window', async () => {
+    vi.useFakeTimers();
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+    };
+    await loadFreshModule();
+
+    const session = speech.listenOnce('en-US');
+    let resolved: string | undefined;
+    void session.promise.then((text) => {
+      resolved = text;
+    });
+    const firstAttempt = instance;
+    firstAttempt.onresult?.({ results: [result('I went to the', true)] });
+    firstAttempt.onend?.();
+
+    await vi.advanceTimersByTimeAsync(100);
+    const emptyAttempt = instance;
+    expect(emptyAttempt).not.toBe(firstAttempt);
+
+    await vi.advanceTimersByTimeAsync(900);
+    emptyAttempt.onerror?.({ error: 'no-speech' });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(resolved).toBeUndefined();
+    expect(instance).not.toBe(emptyAttempt);
+
+    instance.onresult?.({ results: [result('beach yesterday', true)] });
+    instance.onend?.();
+    await expect(session.promise).resolves.toBe('I went to the beach yesterday');
+  });
+
+  it('still ends an unfinished turn at the extended window when every restarted attempt ends empty', async () => {
+    vi.useFakeTimers();
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+    };
+    await loadFreshModule();
+
+    const session = speech.listenOnce('en-US');
+    let resolved: string | undefined;
+    void session.promise.then((text) => {
+      resolved = text;
+    });
+    instance.onresult?.({ results: [result('I went to the', true)] });
+    instance.onend?.();
+
+    for (let attempt = 0; attempt < 4; attempt++) {
+      await vi.advanceTimersByTimeAsync(400);
+      instance.onerror?.({ error: 'no-speech' });
+      await vi.advanceTimersByTimeAsync(100);
+    }
+    expect(resolved).toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(resolved).toBe('I went to the');
+  });
+
   it.each(['I think so', 'Yes you can', 'I love that', 'I will'])(
     'resolves a complete short final turn (%s) at once instead of restarting',
     async (phrase) => {
