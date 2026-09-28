@@ -3,6 +3,8 @@ import { conversationApi, Conversation, Message } from '../api/conversation';
 import { speakChunk, beginSpeech, stopSpeaking, setTtsStateListener } from '../utils/speech';
 import { deriveTitle, toPreview, DEFAULT_TITLE } from '../utils/conversation';
 import { SpeechChunker } from '../utils/speechChunker';
+import { createVoiceTurnLatencyTrace, type VoiceTurnLatencyTrace } from '../utils/voiceLatency';
+import type { VoiceTurnTiming } from '../utils/voiceCapture';
 import { usePersonaStore } from './personaStore';
 
 type AvatarState = 'idle' | 'thinking' | 'speaking' | 'listening';
@@ -32,7 +34,10 @@ interface ChatState {
   renameConversation: (id: string, title: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   setSidebarOpen: (open: boolean) => void;
-  sendMessage: (content: string, opts?: { voiceMode?: boolean }) => Promise<void>;
+  sendMessage: (
+    content: string,
+    opts?: { voiceMode?: boolean; voiceTiming?: VoiceTurnTiming },
+  ) => Promise<void>;
   abortStream: () => void;
   clearError: () => void;
   toggleTts: () => void;
@@ -48,6 +53,7 @@ let streamId = 0;
 // Monotonic id for conversation loads, so a slow GET for conversation A can't
 // overwrite a faster GET for B when the user switches rapidly.
 let loadId = 0;
+let currentVoiceTrace: VoiceTurnLatencyTrace | null = null;
 
 const WATCHDOG_MS = 60_000; // abort if no chunk arrives for 60s
 
@@ -357,6 +363,8 @@ export const useChatStore = create<ChatState>((set, getState) => ({
       currentController = null;
     }
     clearWatchdog();
+    currentVoiceTrace?.cancel();
+    currentVoiceTrace = null;
     stopSpeaking();
     set({
       avatarState: 'idle',
@@ -365,7 +373,10 @@ export const useChatStore = create<ChatState>((set, getState) => ({
     });
   },
 
-  sendMessage: async (content: string, opts?: { voiceMode?: boolean }) => {
+  sendMessage: async (
+    content: string,
+    opts?: { voiceMode?: boolean; voiceTiming?: VoiceTurnTiming },
+  ) => {
     const { activeConversation, isStreaming } = getState();
     // Single-flight at the state boundary, not just the disabled button. Two
     // same-tick UI events must never emit duplicate generation requests.
@@ -422,7 +433,17 @@ export const useChatStore = create<ChatState>((set, getState) => ({
     // (still-Markdown) tokens into speakable chunks, sized so each can be
     // synthesized while the previous one plays.
     const chunker = new SpeechChunker();
-    beginSpeech();
+    currentVoiceTrace?.cancel();
+    const voiceTrace = opts?.voiceTiming ? createVoiceTurnLatencyTrace(opts.voiceTiming) : null;
+    currentVoiceTrace = voiceTrace;
+    beginSpeech(
+      voiceTrace
+        ? () => {
+            voiceTrace.markFirstTtsAudio();
+            if (currentVoiceTrace === voiceTrace) currentVoiceTrace = null;
+          }
+        : undefined,
+    );
 
     const resetWatchdog = () => {
       clearWatchdog();
@@ -501,6 +522,7 @@ export const useChatStore = create<ChatState>((set, getState) => ({
                 break;
 
               case 'token':
+                voiceTrace?.markFirstLlmToken();
                 assistantContent += event.content;
                 set({ streamingContent: assistantContent });
                 if (getState().ttsEnabled) {
@@ -564,6 +586,8 @@ export const useChatStore = create<ChatState>((set, getState) => ({
               }
 
               case 'error':
+                voiceTrace?.cancel();
+                if (currentVoiceTrace === voiceTrace) currentVoiceTrace = null;
                 set({
                   error: event.message || 'Stream error',
                   avatarState: 'idle',
@@ -580,6 +604,8 @@ export const useChatStore = create<ChatState>((set, getState) => ({
     } catch (error: any) {
       // Stale stream — a newer stream superseded this one; don't touch state.
       if (myStreamId !== streamId) return;
+      voiceTrace?.cancel();
+      if (currentVoiceTrace === voiceTrace) currentVoiceTrace = null;
       const wasAborted = error?.name === 'AbortError';
       const requestRejected = error?.requestRejected === true;
       if (requestRejected) {

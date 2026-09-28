@@ -84,14 +84,79 @@ export interface ListenSession {
 // reliably fire `onend` at all after some `no-speech` errors — see the
 // restart logic below. A mid-sentence breath or thinking pause is well under
 // this, so words after a pause are no longer silently dropped.
-const SILENCE_COMMIT_MS = 1200;
+const SILENCE_COMMIT_MS = 1600;
+// A phrase that ends in a conjunction, preposition, or other continuation cue
+// is much more likely to be a thinking pause than the end of the turn. Give it
+// a wider window without adding latency to clean, complete final results.
+const UNFINISHED_SILENCE_COMMIT_MS = 2400;
 
 // Delay before starting the next recognition attempt after an unexpected
 // `onend`/`no-speech`. Calling `start()` synchronously from inside `onend`
 // can throw `InvalidStateError` in some engines because the previous session
 // hasn't fully torn down yet; a tick of delay avoids that without being
 // perceptible as a gap to the speaker.
-const RESTART_DELAY_MS = 250;
+const RESTART_DELAY_MS = 80;
+
+const CONTINUATION_WORDS = new Set([
+  'a',
+  'although',
+  'an',
+  'and',
+  'as',
+  'at',
+  'because',
+  'but',
+  'by',
+  'can',
+  'could',
+  'for',
+  'from',
+  'if',
+  'in',
+  'may',
+  'might',
+  'must',
+  'of',
+  'on',
+  'or',
+  'should',
+  'so',
+  'that',
+  'the',
+  'though',
+  'to',
+  'when',
+  'where',
+  'which',
+  'while',
+  'who',
+  'whose',
+  'why',
+  'will',
+  'with',
+  'without',
+  'would',
+]);
+
+function looksUnfinished(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (/[,:;–—…-]$/.test(trimmed)) return true;
+
+  const pairs: Array<[string, string]> = [
+    ['(', ')'],
+    ['[', ']'],
+    ['{', '}'],
+  ];
+  if (
+    pairs.some(([open, close]) => trimmed.split(open).length - 1 > trimmed.split(close).length - 1)
+  ) {
+    return true;
+  }
+
+  const lastWord = trimmed.toLowerCase().match(/[a-z']+$/)?.[0] ?? '';
+  return CONTINUATION_WORDS.has(lastWord);
+}
 
 /**
  * Listen for one full user turn and resolve with the transcribed text.
@@ -111,16 +176,12 @@ const RESTART_DELAY_MS = 250;
  *    stopped talking, and we stop the recognizer deliberately.
  *  - If the recognizer's own `onend` (or a `no-speech` error, which WebKit
  *    fires in cases where Chrome would just end quietly) arrives before our
- *    own silence timer AND the last thing it delivered was still an interim
- *    result (never promoted to final) — i.e. the engine gave up mid-word,
- *    which is exactly the "Safari cuts off mid-sentence" failure mode — a
- *    fresh attempt starts immediately and transcription keeps accumulating
- *    into the same turn, transparently to the caller.
+ *    own silence timer AND the last text is interim or visibly unfinished —
+ *    including WebKit promoting an incomplete phrase to "final" — a fresh
+ *    attempt starts immediately and keeps accumulating into the same turn.
  *  - An attempt that ends with zero results at all (nothing heard since the
- *    last attempt started), or whose last result was already final, is
- *    trusted as a genuine end of turn and resolves rather than restarting —
- *    this keeps the common case (a clean short utterance) free of added
- *    restart-and-wait-for-silence latency.
+ *    last attempt started), or whose final text looks complete, resolves at
+ *    once. This keeps clean short utterances free of added latency.
  *
  * Returns a `stop()` handle alongside the promise so a caller can end the
  * turn early (e.g. on component unmount) without treating that as an error —
@@ -130,7 +191,8 @@ const RESTART_DELAY_MS = 250;
 export function listenOnce(
   lang = 'en-US',
   onInterim?: (text: string) => void,
-  maxMs = 20000,
+  maxMs = 30000,
+  onSpeechEnd?: (at: number) => void,
 ): ListenSession {
   const Ctor = getRecognitionCtor();
   if (!Ctor) {
@@ -148,6 +210,8 @@ export function listenOnce(
   let current: SpeechRecognitionLike | null = null;
   let restartTimer: ReturnType<typeof setTimeout> | null = null;
   let commitTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastResultAt: number | null = null;
+  let speechEndReported = false;
   let deadlineTimer: ReturnType<typeof setTimeout>;
   let resolveTurn!: (text: string) => void;
   let rejectTurn!: (error: Error) => void;
@@ -176,6 +240,10 @@ export function listenOnce(
     settled = true;
     promotePendingInterim();
     clearTimers();
+    if (!speechEndReported) {
+      speechEndReported = true;
+      onSpeechEnd?.(lastResultAt ?? performance.now());
+    }
     resolveTurn(finalTranscript.trim());
   };
 
@@ -215,7 +283,8 @@ export function listenOnce(
         clearTimeout(commitTimer);
         commitTimer = null;
       }
-      if (stopRequested || !gotAnyResult || lastResultWasFinal) {
+      const transcript = `${finalTranscript} ${lastInterim}`.trim();
+      if (stopRequested || !gotAnyResult || (lastResultWasFinal && !looksUnfinished(transcript))) {
         finish();
         return;
       }
@@ -229,6 +298,7 @@ export function listenOnce(
 
     recognition.onresult = (e) => {
       gotAnyResult = true;
+      lastResultAt = performance.now();
       lastResultWasFinal = e.results.length > 0 && !!e.results[e.results.length - 1].isFinal;
       let interim = '';
       for (let i = 0; i < e.results.length; i++) {
@@ -250,6 +320,9 @@ export function listenOnce(
 
       // We — not the engine — decide how long a pause means "done talking".
       if (commitTimer) clearTimeout(commitTimer);
+      const silenceMs = looksUnfinished(`${finalTranscript} ${interim}`)
+        ? UNFINISHED_SILENCE_COMMIT_MS
+        : SILENCE_COMMIT_MS;
       commitTimer = setTimeout(() => {
         stopRequested = true;
         try {
@@ -257,7 +330,7 @@ export function listenOnce(
         } catch {
           /* ignore */
         }
-      }, SILENCE_COMMIT_MS);
+      }, silenceMs);
     };
 
     recognition.onerror = (e) => {

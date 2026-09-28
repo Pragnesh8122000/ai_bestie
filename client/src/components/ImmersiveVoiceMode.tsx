@@ -3,7 +3,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useChatStore } from '../stores/chatStore';
 import { usePersonaStore } from '../stores/personaStore';
 import { setTtsLevelListener, stopSpeaking } from '../utils/speech';
-import { startVoiceTurn, type VoiceTurnSession } from '../utils/voiceCapture';
+import { startVoiceTurn, type VoiceTurnSession, type VoiceTurnTiming } from '../utils/voiceCapture';
+import { createBargeInDetector } from '../utils/bargeIn';
 import MessageContent from './MessageContent';
 import VoiceOrb from './VoiceOrb';
 
@@ -107,29 +108,45 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
     const isBargeIn = avatarState === 'speaking';
     if (!canStartIdle && !isBargeIn) return;
 
+    let effectSession: VoiceTurnSession | null = null;
+    let bargeAccepted = !isBargeIn;
     const timer = setTimeout(
       () => {
         if (!mountedRef.current || sessionRef.current) return;
         setNotice(null);
-        let bargedIn = !isBargeIn;
+        let voiceTiming: VoiceTurnTiming | undefined;
         if (!isBargeIn) setIsListening(true);
 
-        const handleInterim = (text: string) => {
-          if (bargedIn || !text.trim()) return;
-          bargedIn = true;
+        const latestAssistantText = () => {
+          const state = useChatStore.getState();
+          if (state.streamingContent) return state.streamingContent;
+          const messages = state.activeConversation?.messages ?? [];
+          return (
+            [...messages].reverse().find((message) => message.role === 'assistant')?.content ?? ''
+          );
+        };
+        const acceptsBargeIn = createBargeInDetector(latestAssistantText);
+        const handleSpeech = (text: string, final = false) => {
+          if (bargeAccepted || !acceptsBargeIn(text, final)) return bargeAccepted;
+          bargeAccepted = true;
           // Speaking always takes priority: stop the persona's own audio and
           // the reply it's still generating, then keep listening on this same
           // recognition session so the words that triggered it aren't lost.
           useChatStore.getState().abortStream();
           setIsListening(true);
+          return true;
         };
 
         const session = startVoiceTurn(
           setMicLevel,
           undefined,
-          isBargeIn ? handleInterim : undefined,
+          isBargeIn ? (text) => handleSpeech(text) : undefined,
           !isBargeIn,
+          (timing) => {
+            voiceTiming = timing;
+          },
         );
+        effectSession = session;
         sessionRef.current = session;
         session.promise
           .then(async ({ transcript, usedServerFallback }) => {
@@ -142,9 +159,13 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
                 'Brave fallback: audio was sent to OpenAI for transcription. API usage may be billed.',
               );
             }
+            if (transcript && isBargeIn && !bargeAccepted && !handleSpeech(transcript, true)) {
+              if (mountedRef.current) setCycle((value) => value + 1);
+              return;
+            }
             if (transcript) {
               setTurnPending(true);
-              await sendMessage(transcript, { voiceMode: true });
+              await sendMessage(transcript, { voiceMode: true, voiceTiming });
               if (mountedRef.current) setTurnPending(false);
             }
             if (mountedRef.current) setCycle((value) => value + 1);
@@ -157,7 +178,7 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
             // A silent barge-in probe failing (e.g. permission revoked mid-call)
             // must not surface as an error while the persona is mid-reply —
             // only report it if the user had actually started talking to us.
-            if (bargedIn || !isBargeIn) {
+            if (bargeAccepted || !isBargeIn) {
               setNotice(
                 error instanceof Error ? error.message : 'Voice input failed. Please try again.',
               );
@@ -173,7 +194,16 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
       isBargeIn ? 0 : 450,
     );
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      // A silent barge-in probe must not block the normal idle listener once
+      // TTS finishes. Keep an accepted interruption alive so it can capture the
+      // rest of the user's sentence on that same recognition session.
+      if (isBargeIn && !bargeAccepted && sessionRef.current === effectSession) {
+        sessionRef.current = null;
+        effectSession?.stop();
+      }
+    };
   }, [activeConversation, avatarState, cycle, isStreaming, muted, sendMessage, turnPending]);
 
   return (

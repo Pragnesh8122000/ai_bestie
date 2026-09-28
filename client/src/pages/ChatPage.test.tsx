@@ -201,7 +201,11 @@ describe('ChatPage drawer', () => {
 
     // The persona is still mid-reply, audio actively playing.
     act(() => {
-      useChatStore.setState({ avatarState: 'speaking', isStreaming: true });
+      useChatStore.setState({
+        avatarState: 'speaking',
+        isStreaming: true,
+        streamingContent: 'I can help you plan that trip today.',
+      });
     });
 
     // A barge-in probe starts immediately (no idle debounce) while it's
@@ -211,9 +215,11 @@ describe('ChatPage drawer', () => {
     expect(capturedOnInterim).toBeTypeOf('function');
     expect(screen.getByText(/is speaking/i)).toBeInTheDocument();
 
-    act(() => {
-      capturedOnInterim?.('wait, actually');
-    });
+    act(() => capturedOnInterim?.('I can help'));
+    expect(stopSpeaking).not.toHaveBeenCalled();
+    act(() => capturedOnInterim?.('wait'));
+    expect(stopSpeaking).not.toHaveBeenCalled();
+    act(() => capturedOnInterim?.('wait, actually'));
 
     expect(stopSpeaking).toHaveBeenCalled();
     expect(useChatStore.getState().avatarState).toBe('idle');

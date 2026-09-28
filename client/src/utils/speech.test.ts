@@ -608,6 +608,7 @@ describe('speech-to-text', () => {
   }
 
   afterEach(() => {
+    vi.useRealTimers();
     delete (globalThis as any).SpeechRecognition;
     delete (globalThis as any).webkitSpeechRecognition;
   });
@@ -639,6 +640,30 @@ describe('speech-to-text', () => {
     instance.onend?.();
 
     await expect(session.promise).resolves.toBe('hello world');
+  });
+
+  it('keeps listening when an engine finalizes a grammatically unfinished phrase', async () => {
+    vi.useFakeTimers();
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+    };
+    await loadFreshModule();
+
+    const session = speech.listenOnce('en-US');
+    const firstAttempt = instance;
+    firstAttempt.onresult?.({ results: [result('I was hoping you could', true)] });
+    firstAttempt.onend?.();
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(instance).not.toBe(firstAttempt);
+    instance.onresult?.({ results: [result('help me plan the trip', true)] });
+    instance.onend?.();
+
+    await expect(session.promise).resolves.toBe('I was hoping you could help me plan the trip');
   });
 
   it('surfaces interim results while listening before the final one arrives', async () => {
@@ -680,7 +705,7 @@ describe('speech-to-text', () => {
     firstAttempt.onresult?.({ results: [result('hello', false)] });
     firstAttempt.onend?.();
 
-    await flush(250); // RESTART_DELAY_MS
+    await flush(80); // RESTART_DELAY_MS
 
     expect(instance).not.toBe(firstAttempt); // restarted rather than losing the word
     instance.onresult?.({ results: [result('world', true)] });
@@ -703,14 +728,14 @@ describe('speech-to-text', () => {
     const firstAttempt = instance;
     firstAttempt.onresult?.({ results: [result('first part', false)] });
     firstAttempt.onend?.();
-    await flush(250);
+    await flush(80);
     expect(instance).not.toBe(firstAttempt);
     const secondAttempt = instance;
 
     // The speaker kept talking after the pause the engine mistook for the end.
     secondAttempt.onresult?.({ results: [result('second part', false)] });
     secondAttempt.onend?.();
-    await flush(250);
+    await flush(80);
     expect(instance).not.toBe(secondAttempt);
 
     // A clean final result: the engine now considers the turn complete.
@@ -734,7 +759,7 @@ describe('speech-to-text', () => {
     const firstAttempt = instance;
     firstAttempt.onresult?.({ results: [result('hello', false)] });
     firstAttempt.onerror?.({ error: 'no-speech' });
-    await flush(250);
+    await flush(80);
     expect(instance).not.toBe(firstAttempt);
     instance.onresult?.({ results: [result('world', true)] });
     instance.onend?.();
@@ -773,7 +798,7 @@ describe('speech-to-text', () => {
     instance.onresult?.({ results: [result('done talking', true)] });
     expect(instance.stopped).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(1200); // SILENCE_COMMIT_MS
+    await vi.advanceTimersByTimeAsync(1600); // normal SILENCE_COMMIT_MS
 
     expect(instance.stopped).toBe(true);
     instance.onend?.();
@@ -781,7 +806,29 @@ describe('speech-to-text', () => {
     vi.useRealTimers();
   });
 
-  it('defaults the overall turn ceiling to 20s, not the old 8s one-shot cutoff', async () => {
+  it('extends the silence window when the live transcript is visibly unfinished', async () => {
+    vi.useFakeTimers();
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+    };
+    await loadFreshModule();
+
+    const session = speech.listenOnce('en-US');
+    instance.onresult?.({ results: [result('I need your help because', false)] });
+    await vi.advanceTimersByTimeAsync(1600);
+    expect(instance.stopped).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(800);
+    expect(instance.stopped).toBe(true);
+    instance.onend?.();
+    await expect(session.promise).resolves.toBe('I need your help because');
+  });
+
+  it('defaults the overall turn ceiling to 30s so a long sentence is not clipped', async () => {
     vi.useFakeTimers();
     let instance!: FakeRecognition;
     (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
@@ -797,7 +844,7 @@ describe('speech-to-text', () => {
     await loadFreshModule();
 
     const session = speech.listenOnce('en-US');
-    vi.advanceTimersByTime(19_999);
+    vi.advanceTimersByTime(29_999);
     expect(instance.stopped).toBe(false);
     vi.advanceTimersByTime(1);
 

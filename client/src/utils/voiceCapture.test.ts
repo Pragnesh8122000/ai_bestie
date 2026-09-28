@@ -63,6 +63,7 @@ describe('voice turn capture', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    delete (navigator as Navigator & { brave?: unknown }).brave;
   });
 
   it('uses working browser recognition without uploading audio', async () => {
@@ -100,13 +101,30 @@ describe('voice turn capture', () => {
     expect(stopTrack).toHaveBeenCalledTimes(1);
   });
 
-  it('defaults the turn cap to 20s now that listenOnce restarts across pauses itself', async () => {
+  it('defaults the turn cap to 30s so a long sentence is not clipped', async () => {
     isSTTSupported.mockReturnValue(true);
     listenOnce.mockReturnValue({ promise: Promise.resolve('hi'), stop: vi.fn() });
 
     await startVoiceTurn().promise;
 
-    expect(listenOnce).toHaveBeenCalledWith('en-US', undefined, 20_000);
+    expect(listenOnce).toHaveBeenCalledWith('en-US', undefined, 30_000, expect.any(Function));
+  });
+
+  it("skips Brave's doomed browser recognition probe and starts the fallback immediately", async () => {
+    vi.useFakeTimers();
+    isSTTSupported.mockReturnValue(true);
+    Object.defineProperty(navigator, 'brave', {
+      configurable: true,
+      value: { isBrave: vi.fn().mockResolvedValue(true) },
+    });
+
+    const result = startVoiceTurn(undefined, 1_000).promise;
+    await vi.runAllTimersAsync();
+    await expect(result).resolves.toMatchObject({
+      transcript: 'server transcript',
+      usedServerFallback: true,
+    });
+    expect(listenOnce).not.toHaveBeenCalled();
   });
 
   it('forwards an onInterim callback so a barge-in probe can detect speech while TTS plays', async () => {
@@ -116,7 +134,39 @@ describe('voice turn capture', () => {
 
     await startVoiceTurn(undefined, 1_000, onInterim).promise;
 
-    expect(listenOnce).toHaveBeenCalledWith('en-US', onInterim, 1_000);
+    expect(listenOnce).toHaveBeenCalledWith('en-US', onInterim, 1_000, expect.any(Function));
+  });
+
+  it('reports Safari/native speech-end and transcript-ready as separate latency stages', async () => {
+    isSTTSupported.mockReturnValue(true);
+    let reportSpeechEnd: ((at: number) => void) | undefined;
+    let finishRecognition: ((text: string) => void) | undefined;
+    listenOnce.mockImplementation(
+      (_lang: string, _interim: unknown, _maxMs: number, onSpeechEnd: (at: number) => void) => {
+        reportSpeechEnd = onSpeechEnd;
+        return {
+          promise: new Promise<string>((resolve) => {
+            finishRecognition = resolve;
+          }),
+          stop: vi.fn(),
+        };
+      },
+    );
+    const onTiming = vi.fn();
+
+    const result = startVoiceTurn(undefined, 1_000, undefined, true, onTiming).promise;
+    await vi.waitFor(() => expect(reportSpeechEnd).toBeTypeOf('function'));
+    reportSpeechEnd?.(123);
+    finishRecognition?.('complete sentence');
+    await result;
+
+    expect(onTiming).toHaveBeenCalledWith(
+      expect.objectContaining({
+        speechEndedAt: 123,
+        transcriptReadyAt: expect.any(Number),
+        usedServerFallback: false,
+      }),
+    );
   });
 
   it('never uploads to the paid transcription endpoint for a silent barge-in probe on Brave network failures', async () => {
@@ -159,8 +209,7 @@ describe('voice turn capture', () => {
     });
 
     const session = startVoiceTurn();
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(listenOnce).toHaveBeenCalledTimes(1));
     session.stop();
 
     await expect(session.promise).resolves.toEqual({ transcript: '', usedServerFallback: false });
@@ -169,9 +218,7 @@ describe('voice turn capture', () => {
     expect(transcribeVoiceClip).not.toHaveBeenCalled();
   });
 
-  it('keeps the fallback recording under the server clip limit even with the 20s turn cap', async () => {
-    // The server rejects clips over 12s (413). Recording the full 20s turn
-    // made every Brave fallback clip fail.
+  it('allows a long fallback sentence while staying under the synchronized 30s server limit', async () => {
     vi.useFakeTimers();
     isSTTSupported.mockReturnValue(true);
     listenOnce.mockReturnValue({ promise: Promise.reject(new Error('network')), stop: vi.fn() });
@@ -181,7 +228,8 @@ describe('voice turn capture', () => {
     await result;
 
     const [, duration] = transcribeVoiceClip.mock.calls[0];
-    expect(duration).toBeLessThanOrEqual(12_000);
+    expect(duration).toBeGreaterThan(29_000);
+    expect(duration).toBeLessThanOrEqual(30_000);
   });
 });
 
@@ -212,5 +260,21 @@ describe('end-of-speech detection for the recorded fallback', () => {
     for (; t < 600; t += 50) d.update(0.3, t);
     for (; t < 1200; t += 50) expect(d.update(0.02, t)).toBe(false); // 600ms breath
     for (; t < 1800; t += 50) expect(d.update(0.3, t)).toBe(false); // talking again
+  });
+
+  it('gives a longer utterance room for a natural thinking pause', () => {
+    const d = createEndOfSpeechDetector();
+    let t = 0;
+    for (; t < 1600; t += 50) expect(d.update(0.3, t)).toBe(false);
+    for (; t < 3000; t += 50) expect(d.update(0.02, t)).toBe(false);
+    expect(d.update(0.02, 3850)).toBe(true);
+  });
+
+  it('treats quiet trailing speech as activity after speech has begun', () => {
+    const d = createEndOfSpeechDetector();
+    let t = 0;
+    for (; t < 700; t += 50) d.update(0.3, t);
+    for (; t < 1900; t += 50) expect(d.update(0.08, t)).toBe(false);
+    for (; t < 3000; t += 50) expect(d.update(0.02, t)).toBe(false);
   });
 });

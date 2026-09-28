@@ -55,7 +55,7 @@ process. Optional server transcription is the only metered external path.
 
 **Optional paid service:** OpenAI Whisper is used only when immersive voice
 cannot use browser recognition (notably Brave). Leave `OPENAI_API_KEY` unset to
-disable that fallback. Audio is authenticated, held in memory, capped at 12
+disable that fallback. Audio is authenticated, held in memory, capped at 30
 seconds / 2 MiB, sent directly to OpenAI for transcription, and never logged or
 persisted by AI Bestie. Usage is billed to the configured OpenAI project.
 
@@ -83,7 +83,7 @@ OPENROUTER_MODEL=google/gemma-4-31b-it:free
 # Optional Brave/unsupported-browser transcription fallback
 OPENAI_API_KEY=...
 OPENAI_TRANSCRIPTION_MODEL=whisper-1
-TRANSCRIPTION_MAX_DURATION_MS=12000
+TRANSCRIPTION_MAX_DURATION_MS=30000
 TRANSCRIPTION_MAX_BYTES=2097152
 
 # TTS (neural voice replies; optional — falls back to browser voice if absent)
@@ -491,14 +491,14 @@ jobs:
 The baseline chat deployment is designed to run at **$0**. Enabling the
 optional OpenAI transcription fallback adds metered usage.
 
-| Service                                | Monthly Cost                    |
-| -------------------------------------- | ------------------------------- |
-| LLM (Gemini Flash free tier)           | Free; account/model quotas vary |
-| LLM (OpenRouter free models, fallback) | Free (per-model RPM/daily caps) |
-| MongoDB (local or Atlas M0)            | Free                            |
-| Render (free web service)              | Free (spins down on idle)       |
-| Vercel (free tier)                     | Free                            |
-| **Baseline total (without OpenAI STT)**| **$0/month**                    |
+| Service                                 | Monthly Cost                    |
+| --------------------------------------- | ------------------------------- |
+| LLM (Gemini Flash free tier)            | Free; account/model quotas vary |
+| LLM (OpenRouter free models, fallback)  | Free (per-model RPM/daily caps) |
+| MongoDB (local or Atlas M0)             | Free                            |
+| Render (free web service)               | Free (spins down on idle)       |
+| Vercel (free tier)                      | Free                            |
+| **Baseline total (without OpenAI STT)** | **$0/month**                    |
 
 ### Caveats where "free" can silently become paid
 

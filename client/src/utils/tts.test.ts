@@ -209,6 +209,22 @@ describe('gapless Web Audio playback', () => {
     expect(states).toEqual([true, false]);
   });
 
+  it('marks first audio exactly when playback starts, once per reply', async () => {
+    installTts(10, 80);
+    await load(true);
+    const onFirstAudio = vi.fn();
+
+    tts.beginSpeech(onFirstAudio);
+    tts.speakChunk('One.');
+    tts.speakChunk('Two.');
+    expect(onFirstAudio).not.toHaveBeenCalled();
+    await flush(60);
+
+    expect(onFirstAudio).toHaveBeenCalledTimes(1);
+    await flush(180);
+    expect(onFirstAudio).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps playing a chunk that arrives while the last one is finishing', async () => {
     installTts(10, 100);
     await load(true);

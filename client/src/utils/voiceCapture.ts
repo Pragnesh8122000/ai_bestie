@@ -3,13 +3,15 @@ import { isSTTSupported, listenOnce, type ListenSession } from './speech';
 
 // A turn cap, not a single recognition session's length — `listenOnce` now
 // restarts transparently across pauses, so this only bounds one whole turn.
-const DEFAULT_MAX_MS = 20_000;
-// The server rejects clips over TRANSCRIPTION_MAX_DURATION_MS (12s by
-// default) with 413. The fallback recording used to run for the full 20s turn
-// cap, so every Brave fallback clip was rejected; stay safely under the limit.
-const SERVER_CLIP_MAX_MS = 11_500;
-// Same pause length the browser recognizer path treats as "done talking".
+const DEFAULT_MAX_MS = 30_000;
+// Keep a small transport margin under the server's matching 30s limit. This
+// used to be 11.5s, which silently clipped longer sentences.
+const SERVER_CLIP_MAX_MS = 29_500;
+// Preserve the fast 1.2s commit for short fallback answers; longer fallback
+// utterances use LONG_SPEECH_SILENCE_MS below.
 const END_OF_SPEECH_SILENCE_MS = 1_200;
+const LONG_SPEECH_SILENCE_MS = 2_200;
+const LONG_UTTERANCE_MS = 1_200;
 
 /**
  * Energy-based end-of-turn detection for the recorded (server fallback) path,
@@ -26,6 +28,7 @@ export function createEndOfSpeechDetector({
   let speechStartedAt: number | null = null;
   let lastLoudAt = 0;
   let heardSpeech = false;
+  let noiseFloor = 0.015;
   return {
     /** Feed one level sample; returns true once the speaker has finished. */
     update(level: number, now: number): boolean {
@@ -33,10 +36,28 @@ export function createEndOfSpeechDetector({
         speechStartedAt ??= now;
         lastLoudAt = now;
         if (now - speechStartedAt >= minSpeechMs) heardSpeech = true;
-      } else if (level < silenceLevel && !heardSpeech) {
-        speechStartedAt = null; // a click or blip, not speech
+      } else {
+        if (!heardSpeech) {
+          // Learn the room's baseline before speech starts. The activity floor
+          // stays capped below the speech threshold, so a noisy room can delay
+          // commit but cannot manufacture speech.
+          noiseFloor = noiseFloor * 0.92 + level * 0.08;
+          if (level < silenceLevel) speechStartedAt = null; // a click, not speech
+        }
+
+        const activityLevel = Math.max(0.025, Math.min(silenceLevel, noiseFloor + 0.02));
+        // Once speech is established, quieter trailing syllables still count as
+        // activity. The old code only refreshed on `speechLevel`, so soft words
+        // at the end of a sentence were included in the 1.2s silence window.
+        if (heardSpeech && level >= activityLevel) lastLoudAt = now;
       }
-      return heardSpeech && level < silenceLevel && now - lastLoudAt >= silenceMs;
+      const utteranceMs = speechStartedAt === null ? 0 : lastLoudAt - speechStartedAt;
+      const requiredSilence = utteranceMs >= LONG_UTTERANCE_MS ? LONG_SPEECH_SILENCE_MS : silenceMs;
+      const activityLevel = Math.max(0.025, Math.min(silenceLevel, noiseFloor + 0.02));
+      return heardSpeech && level < activityLevel && now - lastLoudAt >= requiredSilence;
+    },
+    lastSpeechAt(): number | null {
+      return heardSpeech ? lastLoudAt : null;
     },
   };
 }
@@ -49,6 +70,25 @@ export interface VoiceTurnResult {
 export interface VoiceTurnSession {
   promise: Promise<VoiceTurnResult>;
   stop: () => void;
+}
+
+export interface VoiceTurnTiming {
+  captureStartedAt: number;
+  speechEndedAt: number;
+  transcriptReadyAt: number;
+  usedServerFallback: boolean;
+}
+
+interface BraveNavigator extends Navigator {
+  brave?: { isBrave?: () => Promise<boolean> };
+}
+
+async function isBraveBrowser(): Promise<boolean> {
+  try {
+    return Boolean(await (navigator as BraveNavigator).brave?.isBrave?.());
+  } catch {
+    return false;
+  }
 }
 
 interface Capture {
@@ -144,16 +184,17 @@ async function startCapture(onLevel?: (level: number) => void): Promise<Capture>
 }
 
 /**
- * Capture one voice turn. Browser recognition remains the fast/free path. If
- * the constructor is missing or Brave reports its characteristic `network`
- * failure, the same bounded recording is sent to the authenticated server
- * transcription endpoint.
+ * Capture one voice turn. Browser recognition remains the fast/free path.
+ * Brave is detected before its known-slow `network` failure; an unavailable
+ * recognizer or runtime network failure uses the same bounded recording and
+ * authenticated server transcription endpoint.
  */
 export function startVoiceTurn(
   onLevel?: (level: number) => void,
   maxMs = DEFAULT_MAX_MS,
   onInterim?: (text: string) => void,
   allowServerFallback = true,
+  onTiming?: (timing: VoiceTurnTiming) => void,
 ): VoiceTurnSession {
   let cancelled = false;
   let recognition: ListenSession | null = null;
@@ -173,27 +214,55 @@ export function startVoiceTurn(
   // Tracks the mic level for the fallback path's end-of-speech detection.
   const endOfSpeech = createEndOfSpeechDetector();
   let speakerFinished = false;
+  let speechEndedAt: number | null = null;
   const levelSink = (level: number) => {
     onLevel?.(level);
-    if (endOfSpeech.update(level, performance.now())) speakerFinished = true;
+    if (endOfSpeech.update(level, performance.now())) {
+      speakerFinished = true;
+      speechEndedAt ??= endOfSpeech.lastSpeechAt() ?? performance.now();
+      wakeWait?.();
+    }
   };
 
   const promise = (async (): Promise<VoiceTurnResult> => {
     const startedAt = performance.now();
+
+    // Brave exposes the constructor but disables the Google recognition
+    // backend. Waiting for its inevitable `network` error cost 4–5 seconds in
+    // a real browser before the recording could even be uploaded. Detect the
+    // browser first and go directly to the already-configured fallback.
+    const brave = await isBraveBrowser();
+    if (brave && !allowServerFallback) {
+      // Silent barge-in probes must never upload paid audio. Keep this session
+      // cancellable until the speaking state ends instead of spinning a rapid
+      // create/fail/retry loop in Brave.
+      await wait(maxMs);
+      return { transcript: '', usedServerFallback: false };
+    }
+
     capture = await startCapture(levelSink);
     if (cancelled) {
       await capture.stop();
       return { transcript: '', usedServerFallback: false };
     }
 
-    let shouldFallback = !isSTTSupported();
+    let shouldFallback = brave || !isSTTSupported();
     if (!shouldFallback) {
-      recognition = listenOnce('en-US', onInterim, maxMs);
+      recognition = listenOnce('en-US', onInterim, maxMs, (at) => {
+        speechEndedAt = at;
+      });
       try {
         const transcript = (await recognition.promise).trim();
         if (cancelled) return { transcript: '', usedServerFallback: false };
         if (transcript) {
           await capture.stop();
+          const transcriptReadyAt = performance.now();
+          onTiming?.({
+            captureStartedAt: startedAt,
+            speechEndedAt: speechEndedAt ?? transcriptReadyAt,
+            transcriptReadyAt,
+            usedServerFallback: false,
+          });
           return { transcript, usedServerFallback: false };
         }
         await capture.stop();
@@ -224,6 +293,14 @@ export function startVoiceTurn(
       return { transcript: '', usedServerFallback: true };
     }
     const result = await transcribeVoiceClip(recording.blob, recording.durationMs, upload.signal);
+    const transcriptReadyAt = performance.now();
+    onTiming?.({
+      captureStartedAt: startedAt,
+      speechEndedAt:
+        speechEndedAt ?? endOfSpeech.lastSpeechAt() ?? recording.durationMs + startedAt,
+      transcriptReadyAt,
+      usedServerFallback: true,
+    });
     return { transcript: result.text.trim(), usedServerFallback: true };
   })().finally(() => {
     recognition = null;
