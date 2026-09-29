@@ -193,11 +193,13 @@ mongod --dbpath /path/to/data
 
 ### 4. Seed the Database
 
+Set `SEED_USER_EMAIL` and `SEED_USER_PASSWORD` in your local `.env` (never commit them), then:
+
 ```bash
 npm run seed
 ```
 
-This creates a test user: `test@aibestie.com` / `password123` with a default Mentor persona named "Atlas".
+This creates that test user with a default Mentor persona named "Atlas". Seeding is refused when `NODE_ENV=production`.
 
 ### 5. Start Development
 
