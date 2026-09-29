@@ -10,9 +10,26 @@ server/.tts-models/
 
 # Environment
 .env
-.env.local
-.env.production
-.env.staging
+.env.*
+!.env.example
+
+# Keys, certificates, cloud credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.p8
+*.crt
+*.keystore
+*.jks
+id_rsa*
+id_ed25519*
+service-account*.json
+*-credentials.json
+credentials.json
+.npmrc
+.vercel/
+.netlify/
 
 # IDE
 .vscode/

@@ -5,11 +5,20 @@ import { Persona } from './models/Persona';
 
 const seed = async () => {
   try {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Refusing to seed a production database');
+    }
+    const email = process.env.SEED_USER_EMAIL?.trim();
+    const password = process.env.SEED_USER_PASSWORD;
+    if (!email || !password) {
+      throw new Error('Set SEED_USER_EMAIL and SEED_USER_PASSWORD in .env to seed a test user');
+    }
+
     await mongoose.connect(config.mongodb.uri);
     console.log('Connected to MongoDB for seeding');
 
     // Create a test user
-    const existingUser = await User.findOne({ email: 'test@aibestie.com' });
+    const existingUser = await User.findOne({ email });
     if (existingUser) {
       console.log('Test user already exists, skipping seed');
       await mongoose.disconnect();
@@ -17,8 +26,8 @@ const seed = async () => {
     }
 
     const user = await User.create({
-      email: 'test@aibestie.com',
-      password: 'password123',
+      email,
+      password,
       name: 'Test User',
       authProviders: ['password'],
     });
@@ -47,7 +56,7 @@ const seed = async () => {
     await user.save();
 
     console.log('\nSeed data created successfully!');
-    console.log('Test credentials: test@aibestie.com / password123');
+    console.log(`Test user ready: ${email} (password from SEED_USER_PASSWORD)`);
 
     await mongoose.disconnect();
     console.log('Disconnected from MongoDB');
