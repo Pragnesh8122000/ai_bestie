@@ -86,6 +86,7 @@ let wakePump: (() => void) | null = null;
 let speaking = false; // audio is playing (drives notifyState(true))
 let currentAudio: HTMLAudioElement | null = null;
 let currentAudioUrl: string | null = null;
+let firstAudioListener: (() => void) | null = null;
 
 installAudioUnlock();
 
@@ -147,13 +148,15 @@ function resetSession(): void {
   pending = [];
   cancelCurrent();
   speaking = false;
+  firstAudioListener = null;
   levelListener?.(0);
   wakePump?.();
 }
 
 /** Reset the queue for a new reply (cancels any in-progress audio). */
-export function beginSpeech(): void {
+export function beginSpeech(onFirstAudio?: () => void): void {
   resetSession();
+  firstAudioListener = onFirstAudio ?? null;
   // Intentionally does NOT notifyState — matches the old contract so the orb
   // doesn't flicker at stream start.
 }
@@ -262,6 +265,9 @@ function waitForTailOrText(): Promise<boolean> {
 function markSpeaking(): void {
   if (!speaking) {
     speaking = true;
+    const onFirstAudio = firstAudioListener;
+    firstAudioListener = null;
+    onFirstAudio?.();
     notifyState(true);
   }
 }

@@ -20,6 +20,8 @@ export interface StreamOptions {
   onToken?: (token: string) => void;
   onEnd?: (fullText: string) => void;
   signal?: AbortSignal;
+  /** Skip same-model retry backoff for interactive voice turns. */
+  latencyMode?: boolean;
 }
 
 interface Provider {
@@ -196,12 +198,13 @@ async function openStream(
   extraBody?: Record<string, unknown>,
   extraHeaders?: Record<string, string>,
   signal?: AbortSignal,
+  attempts = RETRIES_PER_MODEL,
 ): Promise<{ response: Response | null; ok: boolean; error: string; status: number }> {
   let response: Response | null = null;
   let lastError = '';
   let lastStatus = 0;
 
-  for (let attempt = 0; attempt < RETRIES_PER_MODEL; attempt++) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     try {
       response = await fetch(url, {
@@ -218,7 +221,7 @@ async function openStream(
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       lastStatus = 0;
       lastError = error instanceof Error ? error.message : 'network error';
-      if (attempt === RETRIES_PER_MODEL - 1) {
+      if (attempt === attempts - 1) {
         return { response: null, ok: false, error: lastError, status: 0 };
       }
       await sleep(1000 * (attempt + 1), signal);
@@ -232,7 +235,7 @@ async function openStream(
     lastStatus = response.status;
     lastError = await response.text().catch(() => '');
     const retryable = response.status === 429 || response.status >= 500;
-    if (!retryable || attempt === RETRIES_PER_MODEL - 1) {
+    if (!retryable || attempt === attempts - 1) {
       return { response, ok: false, error: lastError, status: lastStatus };
     }
     try {
@@ -250,7 +253,7 @@ async function openStream(
  * Tries Gemini first, then OpenRouter; within each, tries its model list.
  */
 export async function streamChat(options: StreamOptions): Promise<string> {
-  const { systemPrompt, messages, maxTokens = 1024, onToken, onEnd, signal } = options;
+  const { systemPrompt, messages, maxTokens = 1024, onToken, onEnd, signal, latencyMode } = options;
 
   const providers = buildProviders();
   if (providers.length === 0) {
@@ -283,6 +286,7 @@ export async function streamChat(options: StreamOptions): Promise<string> {
         provider.extraBody,
         provider.extraHeaders,
         signal,
+        latencyMode ? 1 : RETRIES_PER_MODEL,
       );
       if (ok && response) {
         return consumeStream(response, onToken, onEnd, signal);

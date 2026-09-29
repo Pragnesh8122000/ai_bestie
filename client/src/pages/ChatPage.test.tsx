@@ -47,6 +47,7 @@ import { conversationApi } from '../api/conversation';
 import { personaApi } from '../api/persona';
 import { startVoiceTurn } from '../utils/voiceCapture';
 import { stopSpeaking } from '../utils/speech';
+import { TranscriptionRequestError } from '../api/transcription';
 
 const api = conversationApi as unknown as Record<string, ReturnType<typeof vi.fn>>;
 const personaApiMock = personaApi as unknown as Record<string, ReturnType<typeof vi.fn>>;
@@ -188,6 +189,293 @@ describe('ChatPage drawer', () => {
     }
   });
 
+  it('keeps voice mode listening after an over-long fallback clip is rejected', async () => {
+    vi.useFakeTimers();
+    try {
+      let rejectCapture: (error: Error) => void = () => {};
+      vi.mocked(startVoiceTurn)
+        .mockReturnValueOnce({
+          promise: new Promise((_, reject) => {
+            rejectCapture = reject;
+          }),
+          stop: vi.fn(),
+        })
+        .mockReturnValue({ promise: new Promise(() => {}), stop: vi.fn() });
+      render(<ChatPage />, { wrapper: MemoryRouter });
+
+      fireEvent.click(screen.getAllByRole('button', { name: 'Start voice chat' })[1]);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      await act(async () => {
+        rejectCapture(
+          new TranscriptionRequestError('Voice clips must be 12 seconds or shorter.', 413),
+        );
+        await Promise.resolve();
+      });
+
+      expect(screen.getByRole('status')).toHaveTextContent('12 seconds or shorter');
+      expect(screen.getByRole('button', { name: 'Mute microphone' })).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      expect(startVoiceTurn).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole('status')).toHaveTextContent('12 seconds or shorter');
+      expect(screen.getByText(/is listening/i)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps one barge-in probe alive across mid-reply store updates', async () => {
+    const probeStop = vi.fn();
+    vi.mocked(startVoiceTurn).mockImplementation(() => ({
+      promise: new Promise(() => {}),
+      stop: probeStop,
+    }));
+    render(<ChatPage />, { wrapper: MemoryRouter });
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole('button', { name: 'Start voice chat' })[1]);
+    });
+
+    act(() => {
+      useChatStore.setState({ avatarState: 'speaking', isStreaming: true });
+    });
+    await waitFor(() => expect(startVoiceTurn).toHaveBeenCalledTimes(1));
+
+    // The stream's `done` event swaps in the saved conversation and ends
+    // streaming while the persona's audio is still playing.
+    act(() => {
+      const active = useChatStore.getState().activeConversation!;
+      useChatStore.setState({ isStreaming: false, activeConversation: { ...active } });
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(probeStop).not.toHaveBeenCalled();
+    expect(startVoiceTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it('adopts a barge-in probe that already heard the user when the persona finishes', async () => {
+    let capturedOnInterim: ((text: string) => void) | undefined;
+    const probeStop = vi.fn();
+    vi.mocked(startVoiceTurn).mockImplementation((_onLevel, _maxMs, onInterim) => {
+      capturedOnInterim = onInterim;
+      return { promise: new Promise(() => {}), stop: probeStop };
+    });
+    render(<ChatPage />, { wrapper: MemoryRouter });
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole('button', { name: 'Start voice chat' })[1]);
+    });
+
+    act(() => {
+      useChatStore.setState({
+        avatarState: 'speaking',
+        isStreaming: false,
+        streamingContent: 'Anything else today?',
+      });
+    });
+    await waitFor(() => expect(startVoiceTurn).toHaveBeenCalledTimes(1));
+
+    // The user's first word lands just before the last chunk finishes.
+    act(() => capturedOnInterim?.('yes'));
+    act(() => {
+      useChatStore.setState({ avatarState: 'idle', streamingContent: '' });
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    });
+
+    expect(probeStop).not.toHaveBeenCalled();
+    expect(startVoiceTurn).toHaveBeenCalledTimes(1);
+    expect(stopSpeaking).not.toHaveBeenCalled();
+    expect(screen.getByText(/is listening/i)).toBeInTheDocument();
+  });
+
+  it("does not send the persona's own reply-ending word heard by the probe as a user turn", async () => {
+    let capturedOnInterim: ((text: string) => void) | undefined;
+    let resolveProbe: (value: {
+      transcript: string;
+      usedServerFallback: boolean;
+    }) => void = () => {};
+    vi.mocked(startVoiceTurn)
+      .mockImplementationOnce((_onLevel, _maxMs, onInterim) => {
+        capturedOnInterim = onInterim;
+        return {
+          promise: new Promise((resolve) => {
+            resolveProbe = resolve;
+          }),
+          stop: vi.fn(),
+        };
+      })
+      .mockImplementation(() => ({ promise: new Promise(() => {}), stop: vi.fn() }));
+    const active = useChatStore.getState().activeConversation!;
+    useChatStore.setState({
+      activeConversation: {
+        ...active,
+        messages: [
+          {
+            _id: 'r1',
+            role: 'assistant',
+            content: 'That sounds fun. How about you?',
+            timestamp: '2026-09-28T10:00:00.000Z',
+          },
+        ],
+      },
+    });
+    render(<ChatPage />, { wrapper: MemoryRouter });
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole('button', { name: 'Start voice chat' })[1]);
+    });
+
+    act(() => {
+      useChatStore.setState({ avatarState: 'speaking', isStreaming: false });
+    });
+    await waitFor(() => expect(startVoiceTurn).toHaveBeenCalledTimes(1));
+
+    act(() => capturedOnInterim?.('you'));
+    act(() => {
+      useChatStore.setState({ avatarState: 'idle' });
+    });
+    await act(async () => {
+      resolveProbe({ transcript: 'you', usedServerFallback: false });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(api.streamMessage).not.toHaveBeenCalled();
+  });
+
+  it('still echo-filters the final transcript of a probe kept listening at the end of speech', async () => {
+    let capturedOnInterim: ((text: string) => void) | undefined;
+    let resolveProbe: (value: {
+      transcript: string;
+      usedServerFallback: boolean;
+    }) => void = () => {};
+    vi.mocked(startVoiceTurn)
+      .mockImplementationOnce((_onLevel, _maxMs, onInterim) => {
+        capturedOnInterim = onInterim;
+        return {
+          promise: new Promise((resolve) => {
+            resolveProbe = resolve;
+          }),
+          stop: vi.fn(),
+        };
+      })
+      .mockImplementation(() => ({ promise: new Promise(() => {}), stop: vi.fn() }));
+    const active = useChatStore.getState().activeConversation!;
+    useChatStore.setState({
+      activeConversation: {
+        ...active,
+        messages: [
+          {
+            _id: 'r1',
+            role: 'assistant',
+            content: 'We could visit the old market together.',
+            timestamp: '2026-09-28T10:00:00.000Z',
+          },
+        ],
+      },
+    });
+    render(<ChatPage />, { wrapper: MemoryRouter });
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole('button', { name: 'Start voice chat' })[1]);
+    });
+
+    act(() => {
+      useChatStore.setState({ avatarState: 'speaking', isStreaming: false });
+    });
+    await waitFor(() => expect(startVoiceTurn).toHaveBeenCalledTimes(1));
+
+    act(() => capturedOnInterim?.('yes'));
+    act(() => {
+      useChatStore.setState({ avatarState: 'idle' });
+    });
+    expect(screen.getByText(/is listening/i)).toBeInTheDocument();
+
+    await act(async () => {
+      resolveProbe({ transcript: 'the old market together', usedServerFallback: false });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(api.streamMessage).not.toHaveBeenCalled();
+  });
+
+  it('interrupts and sends a final-only barge-in that resolves while the persona is still streaming', async () => {
+    let resolveProbe: (value: {
+      transcript: string;
+      usedServerFallback: boolean;
+    }) => void = () => {};
+    vi.mocked(startVoiceTurn)
+      .mockImplementationOnce(() => ({
+        promise: new Promise((resolve) => {
+          resolveProbe = resolve;
+        }),
+        stop: vi.fn(),
+      }))
+      .mockImplementation(() => ({ promise: new Promise(() => {}), stop: vi.fn() }));
+    api.streamMessage.mockResolvedValue({
+      ok: true,
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              `data: ${JSON.stringify({ type: 'done', messageId: 'm2' })}\n\n`,
+            ),
+          );
+          controller.close();
+        },
+      }),
+    });
+    render(<ChatPage />, { wrapper: MemoryRouter });
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole('button', { name: 'Start voice chat' })[1]);
+    });
+
+    act(() => {
+      useChatStore.setState({
+        avatarState: 'speaking',
+        isStreaming: true,
+        streamingContent: 'Here is a long plan for the whole weekend',
+      });
+    });
+    await waitFor(() => expect(startVoiceTurn).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      resolveProbe({ transcript: 'stop', usedServerFallback: false });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(stopSpeaking).toHaveBeenCalled();
+    await waitFor(() =>
+      expect(api.streamMessage).toHaveBeenCalledWith('a', 'stop', expect.anything(), true),
+    );
+  });
+
+  it('stops a silent barge-in probe when the persona finishes, then listens normally', async () => {
+    const probeStop = vi.fn();
+    vi.mocked(startVoiceTurn)
+      .mockReturnValueOnce({ promise: new Promise(() => {}), stop: probeStop })
+      .mockReturnValue({ promise: new Promise(() => {}), stop: vi.fn() });
+    render(<ChatPage />, { wrapper: MemoryRouter });
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole('button', { name: 'Start voice chat' })[1]);
+    });
+
+    act(() => {
+      useChatStore.setState({ avatarState: 'speaking', isStreaming: false });
+    });
+    await waitFor(() => expect(startVoiceTurn).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      useChatStore.setState({ avatarState: 'idle' });
+    });
+    expect(probeStop).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(startVoiceTurn).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(startVoiceTurn).mock.calls[1][3]).toBe(true);
+  });
+
   it('lets the user barge in: speech heard while the persona is talking stops it instead of waiting', async () => {
     let capturedOnInterim: ((text: string) => void) | undefined;
     vi.mocked(startVoiceTurn).mockImplementation((_onLevel, _maxMs, onInterim) => {
@@ -201,7 +489,11 @@ describe('ChatPage drawer', () => {
 
     // The persona is still mid-reply, audio actively playing.
     act(() => {
-      useChatStore.setState({ avatarState: 'speaking', isStreaming: true });
+      useChatStore.setState({
+        avatarState: 'speaking',
+        isStreaming: true,
+        streamingContent: 'I can help you plan that trip today.',
+      });
     });
 
     // A barge-in probe starts immediately (no idle debounce) while it's
@@ -211,9 +503,11 @@ describe('ChatPage drawer', () => {
     expect(capturedOnInterim).toBeTypeOf('function');
     expect(screen.getByText(/is speaking/i)).toBeInTheDocument();
 
-    act(() => {
-      capturedOnInterim?.('wait, actually');
-    });
+    act(() => capturedOnInterim?.('I can help'));
+    expect(stopSpeaking).not.toHaveBeenCalled();
+    act(() => capturedOnInterim?.('wait'));
+    expect(stopSpeaking).not.toHaveBeenCalled();
+    act(() => capturedOnInterim?.('wait, actually'));
 
     expect(stopSpeaking).toHaveBeenCalled();
     expect(useChatStore.getState().avatarState).toBe('idle');

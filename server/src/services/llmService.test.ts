@@ -116,6 +116,28 @@ describe('LLM provider recovery', () => {
     ]);
   });
 
+  it('fails over without a retry backoff for latency-sensitive voice replies', async () => {
+    configMock.llm.geminiModel = 'gemini-network-a';
+    configMock.llm.openrouterModel = 'openrouter/router-network-a';
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('socket closed'))
+      .mockResolvedValueOnce(sse('recovered quickly'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      streamChat({
+        systemPrompt: 'system',
+        messages: [{ role: 'user', content: 'hi' }],
+        latencyMode: true,
+      }),
+    ).resolves.toBe('recovered quickly');
+    expect(fetchMock.mock.calls.map(requestedModel)).toEqual([
+      'gemini-network-a',
+      'openrouter/router-network-a',
+    ]);
+  });
+
   it('summarizes overload and rate limits without exposing provider payloads', async () => {
     vi.useFakeTimers();
     configMock.llm.geminiModel = 'gemini-busy-a';

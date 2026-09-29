@@ -114,9 +114,11 @@ export async function handleChatStream(
     { $set: { title: deriveTitle(userMessage) } },
   );
 
-  // 4. Append the user message atomically (avoids read-modify-write races).
+  // 4. Append the user message atomically and return the updated document.
+  // Reusing the write result removes a separate database round trip from the
+  // transcript-to-first-token path while preserving concurrent-stream safety.
   const userNow = new Date();
-  await Conversation.updateOne(
+  const refreshed = await Conversation.findOneAndUpdate(
     { _id: conversation._id, userId },
     {
       $push: {
@@ -128,10 +130,10 @@ export async function handleChatStream(
         lastMessagePreview: toPreview(userMessage),
       },
     },
+    { new: true },
   );
 
-  // 5. Re-read recent messages for the context window.
-  const refreshed = await Conversation.findOne({ _id: conversation._id, userId });
+  // 5. Build the context window from that updated document.
   const recentMessages = (refreshed?.getRecentMessages(20) || [])
     .filter((m) => m.role === 'user' || m.role === 'assistant')
     .map((m) => ({
@@ -174,6 +176,7 @@ export async function handleChatStream(
       systemPrompt,
       messages: recentMessages,
       ...(voiceMode ? { maxTokens: VOICE_MODE_MAX_TOKENS } : {}),
+      ...(voiceMode ? { latencyMode: true } : {}),
       signal: ac.signal,
       onToken: (token) => {
         if (firstToken) {

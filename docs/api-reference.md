@@ -596,7 +596,7 @@ Authenticated fallback for browsers whose Web Speech backend is unavailable
 (notably Brave). Send the raw audio body with `Content-Type` set to a supported
 audio type and `X-Audio-Duration-Ms` set to the recorded duration.
 
-- Maximum default duration: 12 seconds
+- Maximum default duration: 30 seconds
 - Maximum default body: 2 MiB
 - Supported: FLAC, MP3/MPEG, MP4/M4A, OGG, WAV, WebM
 - Requires `OPENAI_API_KEY`; audio is forwarded to OpenAI's transcription API

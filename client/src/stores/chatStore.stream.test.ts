@@ -345,6 +345,45 @@ async function expectFirstChunk(tokens: string[], first: string) {
 }
 
 describe('sendMessage voice replies', () => {
+  it('measures transcript, first-token, and actual first-audio timing on the voice path', async () => {
+    useChatStore.setState({
+      conversations: [conversation('a')],
+      activeConversation: { ...conversation('a'), messages: [] },
+      activeConversationId: 'a',
+      ttsEnabled: true,
+    });
+    api.streamMessage.mockResolvedValue(
+      sseResponse([
+        { type: 'token', content: 'I am here.' },
+        { type: 'done', messageId: 'm1' },
+      ]),
+    );
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const now = performance.now();
+
+    await useChatStore.getState().sendMessage('Hello Sam', {
+      voiceMode: true,
+      voiceTiming: {
+        captureStartedAt: now - 800,
+        speechEndedAt: now - 600,
+        transcriptReadyAt: now - 200,
+        usedServerFallback: false,
+      },
+    });
+
+    const { beginSpeech } = await import('../utils/speech');
+    const onFirstAudio = (beginSpeech as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0];
+    expect(onFirstAudio).toBeTypeOf('function');
+    onFirstAudio();
+    const metric = info.mock.calls
+      .flat()
+      .map(String)
+      .find((line) => line.includes('voice.turn.latency'));
+    expect(metric).toContain('speechToTranscriptMs');
+    expect(metric).toContain('firstTokenToFirstAudioMs');
+    info.mockRestore();
+  });
+
   it('speaks after the first sentence instead of waiting for the reply to finish, when voice replies are on', async () => {
     useChatStore.setState({
       conversations: [conversation('a')],

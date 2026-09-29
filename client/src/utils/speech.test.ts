@@ -608,6 +608,7 @@ describe('speech-to-text', () => {
   }
 
   afterEach(() => {
+    vi.useRealTimers();
     delete (globalThis as any).SpeechRecognition;
     delete (globalThis as any).webkitSpeechRecognition;
   });
@@ -640,6 +641,197 @@ describe('speech-to-text', () => {
 
     await expect(session.promise).resolves.toBe('hello world');
   });
+
+  it('keeps listening when an engine finalizes a grammatically unfinished phrase', async () => {
+    vi.useFakeTimers();
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+    };
+    await loadFreshModule();
+
+    const session = speech.listenOnce('en-US');
+    const firstAttempt = instance;
+    firstAttempt.onresult?.({ results: [result('I was hoping you could help me with', true)] });
+    firstAttempt.onend?.();
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(instance).not.toBe(firstAttempt);
+    instance.onresult?.({ results: [result('planning the trip', true)] });
+    instance.onend?.();
+
+    await expect(session.promise).resolves.toBe(
+      'I was hoping you could help me with planning the trip',
+    );
+  });
+
+  it('commits an unfinished final turn after the extended silence even when the restarted attempt hears nothing', async () => {
+    vi.useFakeTimers();
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+    };
+    await loadFreshModule();
+
+    const session = speech.listenOnce('en-US');
+    let resolved: string | undefined;
+    void session.promise.then((text) => {
+      resolved = text;
+    });
+    const firstAttempt = instance;
+    firstAttempt.onresult?.({ results: [result('I want to go to the', true)] });
+    firstAttempt.onend?.();
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(instance).not.toBe(firstAttempt);
+    const restarted = instance;
+
+    await vi.advanceTimersByTimeAsync(2_200);
+    expect(resolved).toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(200);
+    expect(restarted.stopped).toBe(true);
+    await expect(session.promise).resolves.toBe('I want to go to the');
+  });
+
+  it('keeps an unfinished turn open when the restarted attempt ends empty inside the extended window', async () => {
+    vi.useFakeTimers();
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+    };
+    await loadFreshModule();
+
+    const session = speech.listenOnce('en-US');
+    let resolved: string | undefined;
+    void session.promise.then((text) => {
+      resolved = text;
+    });
+    const firstAttempt = instance;
+    firstAttempt.onresult?.({ results: [result('I went to the', true)] });
+    firstAttempt.onend?.();
+
+    await vi.advanceTimersByTimeAsync(100);
+    const emptyAttempt = instance;
+    expect(emptyAttempt).not.toBe(firstAttempt);
+
+    await vi.advanceTimersByTimeAsync(900);
+    emptyAttempt.onerror?.({ error: 'no-speech' });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(resolved).toBeUndefined();
+    expect(instance).not.toBe(emptyAttempt);
+
+    instance.onresult?.({ results: [result('beach yesterday', true)] });
+    instance.onend?.();
+    await expect(session.promise).resolves.toBe('I went to the beach yesterday');
+  });
+
+  it('still ends an unfinished turn at the extended window when every restarted attempt ends empty', async () => {
+    vi.useFakeTimers();
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+    };
+    await loadFreshModule();
+
+    const session = speech.listenOnce('en-US');
+    let resolved: string | undefined;
+    void session.promise.then((text) => {
+      resolved = text;
+    });
+    instance.onresult?.({ results: [result('I went to the', true)] });
+    instance.onend?.();
+
+    for (let attempt = 0; attempt < 4; attempt++) {
+      await vi.advanceTimersByTimeAsync(400);
+      instance.onerror?.({ error: 'no-speech' });
+      await vi.advanceTimersByTimeAsync(100);
+    }
+    expect(resolved).toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(resolved).toBe('I went to the');
+  });
+
+  it.each(['I think so', 'Yes you can', 'I love that', 'I will'])(
+    'resolves a complete short final turn (%s) at once instead of restarting',
+    async (phrase) => {
+      let instance!: FakeRecognition;
+      (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+        constructor() {
+          super();
+          instance = this;
+        }
+      };
+      await loadFreshModule();
+
+      const session = speech.listenOnce('en-US');
+      const firstAttempt = instance;
+      firstAttempt.onresult?.({ results: [result(phrase, true)] });
+      firstAttempt.onend?.();
+
+      await expect(session.promise).resolves.toBe(phrase);
+      expect(instance).toBe(firstAttempt);
+    },
+  );
+
+  it.each(['I think so', 'Yes you can'])(
+    'commits a complete short turn (%s) on the normal silence window',
+    async (phrase) => {
+      vi.useFakeTimers();
+      let instance!: FakeRecognition;
+      (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+        constructor() {
+          super();
+          instance = this;
+        }
+      };
+      await loadFreshModule();
+
+      const session = speech.listenOnce('en-US');
+      instance.onresult?.({ results: [result(phrase, false)] });
+      await vi.advanceTimersByTimeAsync(1_599);
+      expect(instance.stopped).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(instance.stopped).toBe(true);
+      await expect(session.promise).resolves.toBe(phrase);
+    },
+  );
+
+  it.each(['I went there and', 'Can you pass me the'])(
+    'gives a turn trailing a continuation word (%s) the extended window',
+    async (phrase) => {
+      vi.useFakeTimers();
+      let instance!: FakeRecognition;
+      (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+        constructor() {
+          super();
+          instance = this;
+        }
+      };
+      await loadFreshModule();
+
+      const session = speech.listenOnce('en-US');
+      instance.onresult?.({ results: [result(phrase, false)] });
+      await vi.advanceTimersByTimeAsync(1_600);
+      expect(instance.stopped).toBe(false);
+      await vi.advanceTimersByTimeAsync(800);
+      expect(instance.stopped).toBe(true);
+      await expect(session.promise).resolves.toBe(phrase);
+    },
+  );
 
   it('surfaces interim results while listening before the final one arrives', async () => {
     let instance!: FakeRecognition;
@@ -680,7 +872,7 @@ describe('speech-to-text', () => {
     firstAttempt.onresult?.({ results: [result('hello', false)] });
     firstAttempt.onend?.();
 
-    await flush(250); // RESTART_DELAY_MS
+    await flush(80); // RESTART_DELAY_MS
 
     expect(instance).not.toBe(firstAttempt); // restarted rather than losing the word
     instance.onresult?.({ results: [result('world', true)] });
@@ -703,14 +895,14 @@ describe('speech-to-text', () => {
     const firstAttempt = instance;
     firstAttempt.onresult?.({ results: [result('first part', false)] });
     firstAttempt.onend?.();
-    await flush(250);
+    await flush(80);
     expect(instance).not.toBe(firstAttempt);
     const secondAttempt = instance;
 
     // The speaker kept talking after the pause the engine mistook for the end.
     secondAttempt.onresult?.({ results: [result('second part', false)] });
     secondAttempt.onend?.();
-    await flush(250);
+    await flush(80);
     expect(instance).not.toBe(secondAttempt);
 
     // A clean final result: the engine now considers the turn complete.
@@ -734,7 +926,7 @@ describe('speech-to-text', () => {
     const firstAttempt = instance;
     firstAttempt.onresult?.({ results: [result('hello', false)] });
     firstAttempt.onerror?.({ error: 'no-speech' });
-    await flush(250);
+    await flush(80);
     expect(instance).not.toBe(firstAttempt);
     instance.onresult?.({ results: [result('world', true)] });
     instance.onend?.();
@@ -773,7 +965,7 @@ describe('speech-to-text', () => {
     instance.onresult?.({ results: [result('done talking', true)] });
     expect(instance.stopped).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(1200); // SILENCE_COMMIT_MS
+    await vi.advanceTimersByTimeAsync(1600); // normal SILENCE_COMMIT_MS
 
     expect(instance.stopped).toBe(true);
     instance.onend?.();
@@ -781,7 +973,29 @@ describe('speech-to-text', () => {
     vi.useRealTimers();
   });
 
-  it('defaults the overall turn ceiling to 20s, not the old 8s one-shot cutoff', async () => {
+  it('extends the silence window when the live transcript is visibly unfinished', async () => {
+    vi.useFakeTimers();
+    let instance!: FakeRecognition;
+    (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
+      constructor() {
+        super();
+        instance = this;
+      }
+    };
+    await loadFreshModule();
+
+    const session = speech.listenOnce('en-US');
+    instance.onresult?.({ results: [result('I need your help because', false)] });
+    await vi.advanceTimersByTimeAsync(1600);
+    expect(instance.stopped).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(800);
+    expect(instance.stopped).toBe(true);
+    instance.onend?.();
+    await expect(session.promise).resolves.toBe('I need your help because');
+  });
+
+  it('defaults the overall turn ceiling to 30s so a long sentence is not clipped', async () => {
     vi.useFakeTimers();
     let instance!: FakeRecognition;
     (globalThis as any).webkitSpeechRecognition = class extends FakeRecognition {
@@ -797,7 +1011,7 @@ describe('speech-to-text', () => {
     await loadFreshModule();
 
     const session = speech.listenOnce('en-US');
-    vi.advanceTimersByTime(19_999);
+    vi.advanceTimersByTime(29_999);
     expect(instance.stopped).toBe(false);
     vi.advanceTimersByTime(1);
 

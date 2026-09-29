@@ -2,6 +2,16 @@ export interface TranscriptionResult {
   text: string;
 }
 
+export class TranscriptionRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = 'TranscriptionRequestError';
+  }
+}
+
 export async function transcribeVoiceClip(
   audio: Blob,
   durationMs: number,
@@ -20,7 +30,10 @@ export async function transcribeVoiceClip(
 
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { message?: string } | null;
-    throw new Error(body?.message || 'Voice transcription failed. Please try again.');
+    throw new TranscriptionRequestError(
+      body?.message || 'Voice transcription failed. Please try again.',
+      response.status,
+    );
   }
 
   const body = (await response.json()) as {

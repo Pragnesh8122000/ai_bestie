@@ -93,7 +93,7 @@ export const config = {
   transcription: {
     model: process.env.OPENAI_TRANSCRIPTION_MODEL || 'whisper-1',
     maxBytes: Number(process.env.TRANSCRIPTION_MAX_BYTES || 2 * 1024 * 1024),
-    maxDurationMs: Number(process.env.TRANSCRIPTION_MAX_DURATION_MS || 12_000),
+    maxDurationMs: Number(process.env.TRANSCRIPTION_MAX_DURATION_MS || 30_000),
   },
   client: {
     url: process.env.CLIENT_URL || 'http://localhost:5173',
