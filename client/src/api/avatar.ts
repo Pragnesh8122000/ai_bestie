@@ -4,7 +4,7 @@ export interface Avatar {
   id: string;
   name: string;
   src: string;
-  category: 'mentor' | 'friend' | 'therapist' | 'coach';
+  category: 'mentor' | 'friend';
 }
 
 interface AvatarsResponse {

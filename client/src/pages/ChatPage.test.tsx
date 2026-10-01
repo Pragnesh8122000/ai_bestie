@@ -576,7 +576,7 @@ describe('ChatPage drawer', () => {
     const saved = {
       ...current,
       id: 'b',
-      title: 'Coach check-in',
+      title: 'Mentor check-in',
       personaId: 'p2',
       messages: [],
     };
@@ -592,8 +592,8 @@ describe('ChatPage drawer', () => {
           persona: {
             id: 'p2',
             name: 'Riley',
-            archetype: 'coach',
-            avatarId: 'coach-female-01',
+            archetype: 'mentor',
+            avatarId: 'mentor-female-01',
             traits: {},
           },
         },
@@ -601,10 +601,10 @@ describe('ChatPage drawer', () => {
     });
 
     render(<ChatPage />, { wrapper: MemoryRouter });
-    await user.click(await screen.findByTitle('Coach check-in'));
+    await user.click(await screen.findByTitle('Mentor check-in'));
 
     expect(await screen.findByText('Riley')).toBeInTheDocument();
-    expect(screen.getByText('The Coach')).toBeInTheDocument();
+    expect(screen.getByText('The Mentor')).toBeInTheDocument();
   });
 
   it('does not bootstrap the default while a saved conversation is loading', async () => {
@@ -614,7 +614,7 @@ describe('ChatPage drawer', () => {
     const saved = {
       ...current,
       id: 'b',
-      title: 'Coach check-in',
+      title: 'Mentor check-in',
       personaId: 'p2',
       messages: [],
     };
@@ -644,7 +644,7 @@ describe('ChatPage drawer', () => {
     });
 
     render(<ChatPage />, { wrapper: MemoryRouter });
-    await user.click(await screen.findByTitle('Coach check-in'));
+    await user.click(await screen.findByTitle('Mentor check-in'));
 
     expect(api.getDefault).not.toHaveBeenCalled();
 
@@ -656,8 +656,8 @@ describe('ChatPage drawer', () => {
             persona: {
               id: 'p2',
               name: 'Riley',
-              archetype: 'coach',
-              avatarId: 'coach-female-01',
+              archetype: 'mentor',
+              avatarId: 'mentor-female-01',
               traits: {},
             },
           },
@@ -686,7 +686,7 @@ describe('ChatPage drawer', () => {
   it('keeps the persona type visible when archetype metadata fails', async () => {
     const activeConversation = useChatStore.getState().activeConversation!;
     usePersonaStore.setState({
-      personas: [{ id: 'p1', name: 'Morgan', archetype: 'therapist', avatarId: 'a' } as any],
+      personas: [{ id: 'p1', name: 'Morgan', archetype: 'mentor', avatarId: 'a' } as any],
       archetypes: [],
     });
     useChatStore.setState({
@@ -706,8 +706,8 @@ describe('ChatPage drawer', () => {
 
     render(<ChatPage />, { wrapper: MemoryRouter });
 
-    expect(await screen.findByText('The Therapist')).toBeInTheDocument();
-    expect(screen.getByText('morgan · the therapist')).toBeInTheDocument();
+    expect(await screen.findByText('The Mentor')).toBeInTheDocument();
+    expect(screen.getByText('morgan · the mentor')).toBeInTheDocument();
   });
 
   it('opens the drawer and locks body scroll, restoring it on close', async () => {

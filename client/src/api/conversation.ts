@@ -48,7 +48,7 @@ interface DefaultConversationResponse {
     persona: {
       id: string;
       name: string;
-      archetype: 'mentor' | 'friend' | 'therapist' | 'coach';
+      archetype: 'mentor' | 'friend';
       avatarId: string;
       traits: {
         directness: number;

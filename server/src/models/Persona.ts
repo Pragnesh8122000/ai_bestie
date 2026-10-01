@@ -12,7 +12,7 @@ export interface ITrait {
 export interface IPersona extends Document {
   userId: Types.ObjectId;
   name: string;
-  archetype: 'mentor' | 'friend' | 'therapist' | 'coach';
+  archetype: 'mentor' | 'friend';
   avatarId: string;
   traits: ITrait;
   createdAt: Date;
@@ -46,7 +46,7 @@ const personaSchema = new Schema<IPersona>(
     },
     archetype: {
       type: String,
-      enum: ['mentor', 'friend', 'therapist', 'coach'],
+      enum: ['mentor', 'friend'],
       required: true,
     },
     avatarId: {

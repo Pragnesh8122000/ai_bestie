@@ -38,8 +38,8 @@ const personas = [
   {
     id: 'p2',
     name: 'Riley',
-    archetype: 'coach' as const,
-    avatarId: 'coach-female-01',
+    archetype: 'mentor' as const,
+    avatarId: 'mentor-female-01',
     traits: {},
   },
 ];
@@ -70,7 +70,7 @@ describe('SwitchPersonaPage', () => {
   });
 
   it('opens the selected persona exactly once and returns to the chat', async () => {
-    const openPersonaConversation = vi.fn().mockResolvedValue('coach-chat');
+    const openPersonaConversation = vi.fn().mockResolvedValue('mentor-chat');
     useChatStore.setState({ openPersonaConversation: openPersonaConversation as any });
     const user = userEvent.setup();
     render(<SwitchPersonaPage />);
