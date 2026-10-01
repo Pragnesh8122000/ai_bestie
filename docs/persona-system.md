@@ -6,7 +6,7 @@
 
 Each companion is defined by:
 
-1. **Archetype** — The behavioral template (Mentor, Friend, Therapist, Coach)
+1. **Archetype** — The behavioral template (Mentor, Friend)
 2. **Traits** — Five adjustable sliders that fine-tune personality within archetype bounds
 3. **System Prompt** — A 5-layer assembled prompt that drives every conversation
 
@@ -16,8 +16,6 @@ Each companion is defined by:
 | ------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Mentor**    | Guide, challenge, and inspire through wisdom and thoughtful questioning | Calm authority. Uses analogies from nature/business/philosophy. Probes before answering. Celebrates progress. References past conversations.                                           |
 | **Friend**    | Listen, validate, and stand by the user with humor and heart            | Casual and warm. Uses humor naturally. Validates before suggesting ("I hear you" before "have you considered"). Contractions, informal, supportive without saccharine.                 |
-| **Therapist** | Provide a reflective, non-judgmental space for self-exploration         | Calm, measured reflection. Asks more than tells. Mirrors user language. Never prescribes solutions. Uses "It sounds like…" / "What I'm hearing is…" Warm but professional.             |
-| **Coach**     | Drive action, build habits, and hold the user accountable               | Energetic, direct. Uses frameworks (SMART, GROW, Eisenhower). Holds accountable. Follows up on commitments. Celebrates wins loudly. Every conversation ends with a concrete next step. |
 
 ## 5-Trait System
 
@@ -36,20 +34,20 @@ Each persona has 5 trait sliders ranging from 1 (low) to 10 (high):
 Traits are constrained by archetype-defined ranges. When a user sets a trait outside the range, the `pre-save` hook in the Persona model clamps it:
 
 ```
-User sets: directness = 2 (for a Coach archetype)
-Coach range: directness 6-10
-Clamped to: directness = 6
+User sets: directness = 2 (for a Mentor archetype)
+Mentor range: directness 5-9
+Clamped to: directness = 5
 ```
 
 ### Archetype Trait Ranges
 
-| Trait          | Mentor | Friend | Therapist | Coach |
-| -------------- | ------ | ------ | --------- | ----- |
-| Directness     | 5-9    | 2-6    | 1-5       | 6-10  |
-| Warmth         | 4-8    | 7-10   | 5-9       | 3-7   |
-| Proactivity    | 5-9    | 3-7    | 1-5       | 7-10  |
-| Depth          | 6-10   | 3-7    | 7-10      | 4-8   |
-| Accountability | 5-9    | 2-6    | 1-5       | 7-10  |
+| Trait          | Mentor | Friend |
+| -------------- | ------ | ------ |
+| Directness     | 5-9    | 2-6    |
+| Warmth         | 4-8    | 7-10   |
+| Proactivity    | 5-9    | 3-7    |
+| Depth          | 6-10   | 3-7    |
+| Accountability | 5-9    | 2-6    |
 
 Default values sit at the midpoint of each range (rounded).
 

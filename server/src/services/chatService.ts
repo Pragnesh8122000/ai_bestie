@@ -1,9 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { Response } from 'express';
 import { config } from '../config/index';
 import { Conversation, toPreview } from '../models/Conversation';
 import { Persona } from '../models/Persona';
 import { assembleSystemPrompt, ensureDefaultPersona } from './personaService';
 import { LlmProviderError, streamChat } from './llmService';
+import { logMetric } from '../utils/metricsLog';
 
 const STREAM_TIMEOUT_MS = 30_000; // abort upstream if no completion by 30s
 const HEARTBEAT_MS = 15_000; // SSE keepalive to survive idle proxy/CDN drops
@@ -84,6 +86,9 @@ export async function handleChatStream(
   res: Response,
   voiceMode = false,
 ): Promise<void> {
+  const startedAtMs = Date.now();
+  const reqId = randomUUID();
+
   // 1. Load conversation
   const conversation = await Conversation.findOne({
     _id: conversationId,
@@ -171,6 +176,18 @@ export async function handleChatStream(
   let fullResponse = '';
   let firstToken = true;
 
+  // Metrics for the `chat.turn` log line (see utils/metricsLog.ts). Lengths and
+  // timings only — never the message or reply text.
+  const llmStartMs = Date.now();
+  let llmOpenMs = null as number | null;
+  let firstTokenMs = null as number | null;
+  let tokenChunks = 0;
+  let replyChars = 0;
+  let provider = null as { provider: string; model: string; failedAttempts: number } | null;
+  let outcome: 'ok' | 'client_closed' | 'timeout' | 'error' = 'ok';
+  let errorCode: string | undefined;
+  let failureSummary: string | undefined;
+
   try {
     await streamChat({
       systemPrompt,
@@ -178,8 +195,15 @@ export async function handleChatStream(
       ...(voiceMode ? { maxTokens: VOICE_MODE_MAX_TOKENS } : {}),
       ...(voiceMode ? { latencyMode: true } : {}),
       signal: ac.signal,
+      onProvider: (info) => {
+        provider = info;
+        llmOpenMs = Date.now();
+      },
       onToken: (token) => {
+        tokenChunks++;
+        replyChars += token.length;
         if (firstToken) {
+          firstTokenMs = Date.now();
           write(`data: ${JSON.stringify({ type: 'state', state: 'speaking' })}\n\n`);
           firstToken = false;
         }
@@ -223,13 +247,18 @@ export async function handleChatStream(
     const aborted = ac.signal.aborted;
     if (clientClosed) {
       // Client is gone — nothing to send; the user message is already persisted.
+      outcome = 'client_closed';
     } else if (aborted) {
       // Timed out (client still connected) — surface a friendly error.
+      outcome = 'timeout';
       write(
         `data: ${JSON.stringify({ type: 'error', message: 'Reply timed out. Please try again.' })}\n\n`,
       );
     } else {
       const providerError = error instanceof LlmProviderError ? error : null;
+      outcome = 'error';
+      errorCode = providerError?.code ?? 'UNEXPECTED';
+      failureSummary = providerError?.internalSummary;
       const raw = error instanceof Error ? error.message : 'Failed to generate response';
       console.error(
         'Chat generation failed:',
@@ -249,6 +278,35 @@ export async function handleChatStream(
       );
     }
   } finally {
+    const endMs = Date.now();
+    logMetric('chat.turn', {
+      reqId,
+      userId,
+      conversationId,
+      voiceMode,
+      startedAt: new Date(startedAtMs).toISOString(),
+      outcome,
+      ...(errorCode ? { errorCode } : {}),
+      // Time before the LLM call: DB loads, prompt assembly, persisting the user message.
+      prepMs: llmStartMs - startedAtMs,
+      // LLM request sent -> upstream stream open (includes failover/retry waits).
+      llmConnectMs: llmOpenMs === null ? null : llmOpenMs - llmStartMs,
+      // Request received -> first token written: what the server adds to the
+      // speech-end -> first-audio path of a voice turn.
+      ttfbMs: firstTokenMs === null ? null : firstTokenMs - startedAtMs,
+      llmTtftMs: firstTokenMs === null ? null : firstTokenMs - llmStartMs,
+      streamMs: firstTokenMs === null ? null : endMs - firstTokenMs,
+      totalMs: endMs - startedAtMs,
+      provider: provider?.provider ?? null,
+      model: provider?.model ?? null,
+      failedAttempts: provider?.failedAttempts ?? null,
+      ...(failureSummary ? { failureSummary } : {}),
+      maxTokens: voiceMode ? VOICE_MODE_MAX_TOKENS : null,
+      inputChars: userMessage.length,
+      contextMessages: recentMessages.length,
+      replyChars,
+      tokenChunks,
+    });
     clearInterval(heartbeat);
     if (!res.writableEnded) {
       try {

@@ -183,14 +183,14 @@ describe('switchConversation', () => {
     );
     api.get.mockResolvedValue(
       detail(
-        'coach-chat',
+        'mentor-chat',
         { personaId: 'p2' },
-        { id: 'p2', name: 'Riley', archetype: 'coach', avatarId: 'coach-female-01' },
+        { id: 'p2', name: 'Riley', archetype: 'mentor', avatarId: 'mentor-female-01' },
       ),
     );
 
     const defaultLoad = useChatStore.getState().openDefaultConversation();
-    await useChatStore.getState().switchConversation('coach-chat');
+    await useChatStore.getState().switchConversation('mentor-chat');
 
     resolveDefault({
       data: {
@@ -209,8 +209,8 @@ describe('switchConversation', () => {
     await defaultLoad;
 
     const state = useChatStore.getState();
-    expect(state.activeConversationId).toBe('coach-chat');
-    expect(state.activeConversation?.id).toBe('coach-chat');
+    expect(state.activeConversationId).toBe('mentor-chat');
+    expect(state.activeConversation?.id).toBe('mentor-chat');
     expect(usePersonaStore.getState().personas.map((persona) => persona.id)).toEqual(['p2']);
   });
 
@@ -249,21 +249,21 @@ describe('switchConversation', () => {
 describe('openPersonaConversation', () => {
   it('opens the selected existing persona in one request and makes it active', async () => {
     const selected = detail(
-      'coach-chat',
+      'mentor-chat',
       { personaId: 'p2', lastMessageAt: '2026-09-20T10:00:00.000Z' },
-      { id: 'p2', name: 'Riley', archetype: 'coach', avatarId: 'coach-female-01' },
+      { id: 'p2', name: 'Riley', archetype: 'mentor', avatarId: 'mentor-female-01' },
     );
     api.openPersona.mockResolvedValue(selected);
     useChatStore.setState({ conversations: [conversation('friend-chat')] });
 
     const id = await useChatStore.getState().openPersonaConversation('p2');
 
-    expect(id).toBe('coach-chat');
+    expect(id).toBe('mentor-chat');
     expect(api.openPersona).toHaveBeenCalledTimes(1);
     expect(api.openPersona).toHaveBeenCalledWith('p2');
     expect(api.create).not.toHaveBeenCalled();
     expect(api.get).not.toHaveBeenCalled();
-    expect(useChatStore.getState().activeConversationId).toBe('coach-chat');
+    expect(useChatStore.getState().activeConversationId).toBe('mentor-chat');
     expect(usePersonaStore.getState().activePersonaId).toBe('p2');
   });
 

@@ -224,7 +224,7 @@ List all avatars, optionally filtered by category.
 
 | Param      | Type   | Description                                      |
 | ---------- | ------ | ------------------------------------------------ |
-| `category` | string | Filter: `mentor`, `friend`, `therapist`, `coach` |
+| `category` | string | Filter: `mentor`, `friend`                       |
 
 **Response (200):**
 

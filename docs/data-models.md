@@ -66,7 +66,7 @@ the partial unique index.
 |-------|------|-------------|-------------|
 | `userId` | ObjectId | required, ref: User | Owner of this persona |
 | `name` | String | required, trimmed, max 50 | Persona's display name |
-| `archetype` | String | required, enum: mentor/friend/therapist/coach | Behavioral template |
+| `archetype` | String | required, enum: mentor/friend | Behavioral template |
 | `avatarId` | String | required | Reference to avatar in manifest |
 | `traits` | Embedded Doc | required | 5 personality sliders |
 | `traits.directness` | Number | required, 1-10, default: archetype default | How direct the persona is |

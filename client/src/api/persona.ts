@@ -3,7 +3,7 @@ import apiClient from './client';
 export interface Persona {
   id: string;
   name: string;
-  archetype: 'mentor' | 'friend' | 'therapist' | 'coach';
+  archetype: 'mentor' | 'friend';
   avatarId: string;
   traits: {
     directness: number;

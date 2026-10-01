@@ -6,14 +6,14 @@ AI Bestie is a full-stack web application where users switch among provisioned A
 
 ## ✨ Key Features
 
-- **4 Companion Archetypes** — Mentor, Friend, Therapist, Coach — each with unique voice, traits, and behavioral rules
+- **2 Companion Archetypes** — Friend and Mentor — each with unique voice, traits, and behavioral rules
 - **5-Trait Personality Sliders** — Fine-tune directness, warmth, proactivity, depth, and accountability within archetype bounds
 - **Real-Time Streaming Chat** — Token-by-token SSE streaming with Gemini Flash (free tier, primary) falling back to OpenRouter (free models), avatar state animations (idle → thinking → speaking)
 - **Password + Google Sign-In** — Google Identity Services ID tokens are verified server-side, then reuse the same HTTP-only JWT session as password accounts
 - **Voice Conversation** — Immersive orb-first chat with browser speech recognition and an optional authenticated OpenAI transcription fallback for Brave/unsupported browsers. Voice replies use neural TTS (Kokoro, free + open-source, in-process) and fall back to browser speech synthesis when needed.
 - **Session Memory** — Last 20 messages kept in the conversation for context
 - **5-Layer System Prompts** — Identity → Voice → Rules → Context → Calibration, with Chain-of-Persona self-check
-- **12 Avatar Options** — Placeholder SVG avatars (Friend/Mentor/Therapist/Coach)
+- **8 Avatar Options** — Placeholder SVG avatars (Friend/Mentor)
 
 ## 🛠 Tech Stack
 
@@ -372,8 +372,6 @@ See [docs/persona-system.md](docs/persona-system.md) for the full 5-layer prompt
 | ------------- | ----------------------- | ------------------------------------------------ | ---------------------- |
 | **Mentor**    | Wise, measured          | Direct 5-9, Warm 4-8, Deep 6-10                  | Growth, career advice  |
 | **Friend**    | Casual, warm            | Warm 7-10, Direct 2-6, Depth 3-7                 | Emotional support, fun |
-| **Therapist** | Reflective, gentle      | Warm 5-9, Direct 1-5, Depth 7-10                 | Self-exploration       |
-| **Coach**     | Direct, action-oriented | Direct 6-10, Proactive 7-10, Accountability 7-10 | Goals, habits          |
 
 ## 🧪 Available Scripts
 

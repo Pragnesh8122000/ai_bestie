@@ -4,6 +4,7 @@ import os from 'node:os';
 import { OfflineTts, GenerationConfig, type GeneratedAudio } from 'sherpa-onnx-node';
 import { config } from '../config';
 import { AppError } from '../utils/errors';
+import { logMetric } from '../utils/metricsLog';
 import { TtsQueue } from './ttsQueue';
 import { speakableText } from './ttsText';
 
@@ -278,6 +279,7 @@ export function ttsStatus(): TtsStatus {
 /** Correlation ids for one request's log line. Never the text itself. */
 export interface TtsLogContext {
   reqId?: string;
+  userId?: string;
   generation?: string;
   chunk?: string;
   lang?: string;
@@ -289,8 +291,8 @@ export interface TtsLogContext {
  * private conversation.
  */
 export function logTts(fields: Record<string, unknown>): void {
-  if (process.env.NODE_ENV === 'test' || process.env.VITEST) return;
-  console.log(JSON.stringify({ ts: new Date().toISOString(), provider: 'kokoro', ...fields }));
+  const { evt = 'tts', ...rest } = fields;
+  logMetric(String(evt), { provider: 'kokoro', ...rest });
 }
 
 export class TtsTimeoutError extends Error {

@@ -261,7 +261,7 @@ describe('sendMessage', () => {
       data: {
         data: {
           conversation: { ...conversation('b'), messages: [] },
-          persona: { id: 'p2', name: 'Riley', archetype: 'coach', avatarId: 'a', traits: {} },
+          persona: { id: 'p2', name: 'Riley', archetype: 'mentor', avatarId: 'a', traits: {} },
         },
       },
     });

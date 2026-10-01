@@ -95,6 +95,16 @@ export const config = {
     maxBytes: Number(process.env.TRANSCRIPTION_MAX_BYTES || 2 * 1024 * 1024),
     maxDurationMs: Number(process.env.TRANSCRIPTION_MAX_DURATION_MS || 30_000),
   },
+  // Voice-performance metrics (see utils/metricsLog.ts). Always one JSON line
+  // per event on stdout; additionally appended to a daily JSONL file when a
+  // directory is set. Defaults to server/logs outside production (hosted disks
+  // are ephemeral, so production relies on the platform's stdout capture
+  // unless VOICE_METRICS_DIR is set explicitly).
+  metrics: {
+    dir:
+      process.env.VOICE_METRICS_DIR?.trim() ||
+      (process.env.NODE_ENV === 'production' ? '' : path.resolve(rootDir, 'server/logs')),
+  },
   client: {
     url: process.env.CLIENT_URL || 'http://localhost:5173',
   },

@@ -1,9 +1,16 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { deriveTitle, ensureDefaultConversation, openPersonaConversation } from './chatService';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  deriveTitle,
+  ensureDefaultConversation,
+  handleChatStream,
+  openPersonaConversation,
+} from './chatService';
 import { toPreview, PREVIEW_MAX_LENGTH } from '../models/Conversation';
 import { Conversation } from '../models/Conversation';
 import { Persona } from '../models/Persona';
 import { ensureDefaultPersona } from './personaService';
+import { streamChat } from './llmService';
+import { setMetricSink } from '../utils/metricsLog';
 
 vi.mock('../models/Conversation', async () => {
   const actual =
@@ -14,8 +21,15 @@ vi.mock('../models/Conversation', async () => {
       findOne: vi.fn(),
       findById: vi.fn(),
       create: vi.fn(),
+      updateOne: vi.fn(),
+      findOneAndUpdate: vi.fn(),
     },
   };
+});
+
+vi.mock('./llmService', async () => {
+  const actual = await vi.importActual<typeof import('./llmService')>('./llmService');
+  return { ...actual, streamChat: vi.fn() };
 });
 
 vi.mock('../models/Persona', () => ({
@@ -110,30 +124,30 @@ describe('ensureDefaultConversation', () => {
       archetype: 'friend',
       avatarId: 'friend-male-01',
     };
-    const coachPersona = {
-      _id: fakeId('coach-persona-id'),
-      name: 'Coach Alex',
-      archetype: 'coach',
-      avatarId: 'coach-male-01',
+    const mentorPersona = {
+      _id: fakeId('mentor-persona-id'),
+      name: 'Mentor Alex',
+      archetype: 'mentor',
+      avatarId: 'mentor-male-01',
     };
-    const coachConversation = {
-      _id: fakeId('coach-conversation-id'),
+    const mentorConversation = {
+      _id: fakeId('mentor-conversation-id'),
       userId: 'user-1',
-      personaId: fakeId('coach-persona-id'),
+      personaId: fakeId('mentor-persona-id'),
       isArchived: false,
     };
 
     vi.mocked(ensureDefaultPersona).mockResolvedValue(defaultPersona as any);
     vi.mocked(Conversation.findOne).mockReturnValue({
-      sort: () => ({ lean: () => Promise.resolve(coachConversation) }),
+      sort: () => ({ lean: () => Promise.resolve(mentorConversation) }),
     } as any);
-    vi.mocked(Persona.findById).mockResolvedValue(coachPersona as any);
+    vi.mocked(Persona.findById).mockResolvedValue(mentorPersona as any);
 
     const result = await ensureDefaultConversation('user-1');
 
-    expect(Persona.findById).toHaveBeenCalledWith(coachConversation.personaId);
-    expect(result.persona).toBe(coachPersona);
-    expect(result.conversation.personaId).toBe('coach-persona-id');
+    expect(Persona.findById).toHaveBeenCalledWith(mentorConversation.personaId);
+    expect(result.persona).toBe(mentorPersona);
+    expect(result.conversation.personaId).toBe('mentor-persona-id');
   });
 
   it('uses the default persona when the resumed conversation already belongs to it', async () => {
@@ -171,8 +185,8 @@ describe('openPersonaConversation', () => {
     _id: fakeId('507f1f77bcf86cd799439011'),
     userId: fakeId('507f1f77bcf86cd799439012'),
     name: 'Riley',
-    archetype: 'coach',
-    avatarId: 'coach-female-01',
+    archetype: 'mentor',
+    avatarId: 'mentor-female-01',
     traits: {},
   };
 
@@ -246,5 +260,93 @@ describe('openPersonaConversation', () => {
     ).resolves.toBeNull();
     expect(Conversation.findOne).not.toHaveBeenCalled();
     expect(Conversation.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleChatStream metrics', () => {
+  const lines: string[] = [];
+
+  const fakeRes = () =>
+    ({
+      destroyed: false,
+      writableEnded: false,
+      setHeader: vi.fn(),
+      write: vi.fn(),
+      on: vi.fn(),
+      end: vi.fn(function (this: any) {
+        this.writableEnded = true;
+      }),
+      status: vi.fn().mockReturnThis(),
+      json: vi.fn(),
+    }) as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    lines.length = 0;
+    setMetricSink((l) => lines.push(l));
+    vi.mocked(Conversation.findOne).mockResolvedValue({ _id: 'c1', personaId: 'p1' } as any);
+    vi.mocked(Persona.findById).mockResolvedValue({ _id: 'p1' } as any);
+    vi.mocked(Conversation.updateOne).mockResolvedValue({} as any);
+    vi.mocked(Conversation.findOneAndUpdate).mockResolvedValue({
+      getRecentMessages: () => [{ role: 'user', content: 'hello there' }],
+    } as any);
+  });
+
+  afterEach(() => setMetricSink(null));
+
+  it('logs one chat.turn line with timings and sizes but no text', async () => {
+    vi.mocked(streamChat).mockImplementation(async (opts: any) => {
+      opts.onProvider({ provider: 'gemini', model: 'flash-x', failedAttempts: 1 });
+      opts.onToken('Hi ');
+      opts.onToken('friend');
+      opts.onEnd('Hi friend');
+      return 'Hi friend';
+    });
+
+    await handleChatStream('u1', 'c1', 'my secret message', fakeRes(), true);
+
+    expect(lines).toHaveLength(1);
+    const entry = JSON.parse(lines[0]);
+    expect(entry).toMatchObject({
+      evt: 'chat.turn',
+      userId: 'u1',
+      conversationId: 'c1',
+      voiceMode: true,
+      outcome: 'ok',
+      provider: 'gemini',
+      model: 'flash-x',
+      failedAttempts: 1,
+      inputChars: 'my secret message'.length,
+      contextMessages: 1,
+      replyChars: 'Hi friend'.length,
+      tokenChunks: 2,
+    });
+    for (const key of ['prepMs', 'llmConnectMs', 'ttfbMs', 'llmTtftMs', 'streamMs', 'totalMs']) {
+      expect(typeof entry[key]).toBe('number');
+    }
+    expect(entry.totalMs).toBeGreaterThanOrEqual(entry.ttfbMs);
+    expect(lines[0]).not.toContain('my secret message');
+    expect(lines[0]).not.toContain('Hi friend');
+  });
+
+  it('logs an error outcome with a null ttfb when the LLM fails before any token', async () => {
+    const { LlmProviderError } = await import('./llmService');
+    vi.mocked(streamChat).mockRejectedValue(
+      new LlmProviderError('LLM_BUSY', 'busy', 'gemini/flash-x=429:rate-limit'),
+    );
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await handleChatStream('u1', 'c1', 'hello', fakeRes(), false);
+
+    expect(JSON.parse(lines[0])).toMatchObject({
+      evt: 'chat.turn',
+      voiceMode: false,
+      outcome: 'error',
+      errorCode: 'LLM_BUSY',
+      failureSummary: 'gemini/flash-x=429:rate-limit',
+      ttfbMs: null,
+      provider: null,
+      replyChars: 0,
+    });
   });
 });
