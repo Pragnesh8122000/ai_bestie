@@ -64,6 +64,7 @@ router.post(
     try {
       const { wav } = await synthesize(input.text, ac.signal, {
         reqId: randomUUID(),
+        userId: req.userId,
         generation: correlationId(req.get('X-TTS-Generation')),
         chunk: correlationId(req.get('X-TTS-Chunk')),
         lang: input.lang,

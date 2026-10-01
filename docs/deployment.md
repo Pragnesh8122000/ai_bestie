@@ -106,6 +106,11 @@ TTS_SPEED=0.95
 # TTS_INFERENCE_TIMEOUT_MS=20000
 # TTS_WARMUP=true
 
+# Voice-performance metrics (JSONL; timings/sizes/outcomes only, no content).
+# Always on stdout; set a directory to also write voice-metrics-YYYY-MM-DD.jsonl.
+# Defaults to server/logs outside production, off in production.
+# VOICE_METRICS_DIR=
+
 # No Anthropic, OpenAI chat-generation, Voyage, or Redis keys are used.
 ```
 

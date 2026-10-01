@@ -22,6 +22,8 @@ export interface StreamOptions {
   signal?: AbortSignal;
   /** Skip same-model retry backoff for interactive voice turns. */
   latencyMode?: boolean;
+  /** Called once the upstream stream is open, with which model won and how many were skipped. */
+  onProvider?: (info: { provider: string; model: string; failedAttempts: number }) => void;
 }
 
 interface Provider {
@@ -253,7 +255,8 @@ async function openStream(
  * Tries Gemini first, then OpenRouter; within each, tries its model list.
  */
 export async function streamChat(options: StreamOptions): Promise<string> {
-  const { systemPrompt, messages, maxTokens = 1024, onToken, onEnd, signal, latencyMode } = options;
+  const { systemPrompt, messages, maxTokens = 1024, onToken, onEnd, signal, latencyMode, onProvider } =
+    options;
 
   const providers = buildProviders();
   if (providers.length === 0) {
@@ -289,6 +292,7 @@ export async function streamChat(options: StreamOptions): Promise<string> {
         latencyMode ? 1 : RETRIES_PER_MODEL,
       );
       if (ok && response) {
+        onProvider?.({ provider: provider.name, model, failedAttempts: failures.length });
         return consumeStream(response, onToken, onEnd, signal);
       }
       const kind = classifyFailure(status, error);

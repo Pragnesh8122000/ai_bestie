@@ -8,6 +8,9 @@ client/dist/
 # TTS model — ~330 MB, downloaded via `npm run download-tts-model -w server`
 server/.tts-models/
 
+# Voice-performance metrics (JSONL, see docs/deployment.md)
+server/logs/
+
 # Environment
 .env
 .env.*
