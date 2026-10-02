@@ -401,6 +401,18 @@ function wavDurationMs(data: ArrayBuffer | null, size: number): number {
   return (Math.max(0, size - 44) / (rate * 2)) * 1000;
 }
 
+// Compressed audio (Fish Audio's mp3/opus) has no cheap length header; ~128 kbps.
+const COMPRESSED_BYTES_PER_MS = 16;
+
+/** The server picks the format per TTS provider: WAV (Kokoro) or mp3/opus. */
+function audioType(res: Response): string {
+  return res.headers?.get?.('Content-Type')?.split(';')[0].trim() || 'audio/wav';
+}
+
+function estimatedDurationMs(type: string, data: ArrayBuffer | null, size: number): number {
+  return type === 'audio/wav' ? wavDurationMs(data, size) : size / COMPRESSED_BYTES_PER_MS;
+}
+
 /** Turn a successful /api/tts response into something playable, or null if empty. */
 async function toItem(res: Response, trace?: ChunkTrace): Promise<QueueItem | null> {
   if (isWebAudioSupported() && typeof res.arrayBuffer === 'function' && getAudioContext()) {
@@ -408,21 +420,22 @@ async function toItem(res: Response, trace?: ChunkTrace): Promise<QueueItem | nu
     trace?.mark('body');
     trace?.set({ bytes: data.byteLength });
     if (!data.byteLength) return null;
-    const blob = new Blob([data], { type: 'audio/wav' });
+    const type = audioType(res);
+    const blob = new Blob([data], { type });
     // decodeAudioData detaches its input, so it gets a copy.
     const buffer = await decodeAudio(data.slice(0));
     trace?.mark('decoded');
     if (buffer) trace?.set({ audioMs: Math.round(buffer.duration * 1000) });
     return buffer
       ? { kind: 'buffer', buffer, blob }
-      : remoteItem(blob, wavDurationMs(data, data.byteLength));
+      : remoteItem(blob, estimatedDurationMs(type, data, data.byteLength));
   }
   const blob = await res.blob();
   trace?.mark('body');
   trace?.set({ bytes: blob?.size ?? 0 });
   if (!blob || blob.size === 0) return null;
   trace?.mark('decoded');
-  return remoteItem(blob, wavDurationMs(null, blob.size));
+  return remoteItem(blob, estimatedDurationMs(audioType(res), null, blob.size));
 }
 
 /** One retry, only for failures that are transient and safe to repeat. */

@@ -28,10 +28,7 @@ async function load(env: Record<string, string | undefined>) {
   return import('./ttsService');
 }
 
-async function resolveWith(
-  sid: string | undefined,
-  version?: string,
-): Promise<number> {
+async function resolveWith(sid: string | undefined, version?: string): Promise<number> {
   const mod = await load({ TTS_SID: sid, TTS_MODEL_VERSION: version });
   return mod.resolveSid();
 }
@@ -165,5 +162,121 @@ describe('ttsStatus', () => {
     expect(s.queue).toMatchObject({ active: 0, queued: 0 });
     expect(s.counters).toEqual({ ok: 0, cancelled: 0, busy: 0, timeouts: 0, failures: 0 });
     expect(JSON.stringify(s)).not.toMatch(/text"/);
+  });
+});
+
+describe('TTS_PROVIDER=fishaudio', () => {
+  const fishEnv = [
+    'TTS_PROVIDER',
+    'FISH_API_KEY',
+    'FISH_VOICE_ID',
+    'FISH_REFERENCE_ID',
+    'FISH_TTS_FORMAT',
+    'FISH_TTS_SPEED',
+    'FISH_TTS_LATENCY',
+  ];
+  const saved = Object.fromEntries(fishEnv.map((k) => [k, process.env[k]]));
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    for (const k of fishEnv) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it('is unavailable without FISH_API_KEY and never loads Kokoro', async () => {
+    const mod = await load({ TTS_ENABLED: 'true', TTS_PROVIDER: 'fishaudio', FISH_API_KEY: '' });
+    await mod.initTts();
+    const s = mod.ttsStatus();
+    expect(s.provider).toBe('fishaudio');
+    expect(s.available).toBe(false);
+    expect(s.error).toMatch(/FISH_API_KEY/);
+    expect(s.sampleRate).toBeNull();
+  });
+
+  it('posts the chunk to Fish Audio and returns its mp3 untouched', async () => {
+    const mp3 = new Uint8Array([0x49, 0x44, 0x33, 1, 2, 3]);
+    const fetchMock = vi.fn(async () => new Response(mp3, { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const mod = await load({
+      TTS_ENABLED: 'true',
+      TTS_PROVIDER: 'fishaudio',
+      FISH_API_KEY: 'test-key',
+      // Blank, not unset: config's dotenv would refill unset keys from a
+      // developer's real .env on every module reload.
+      FISH_VOICE_ID: '',
+      FISH_REFERENCE_ID: 'voice-123',
+      FISH_TTS_FORMAT: '',
+      FISH_TTS_SPEED: '',
+      FISH_TTS_LATENCY: '',
+    });
+
+    const out = await mod.synthesize('Hello there 😊', new AbortController().signal);
+
+    expect(out.contentType).toBe('audio/mpeg');
+    expect(out.audioMs).toBeNull();
+    expect([...out.audio]).toEqual([...mp3]);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://api.fish.audio/v1/tts');
+    expect(init.headers).toMatchObject({
+      Authorization: 'Bearer test-key',
+      'Content-Type': 'application/json',
+      model: 's2.1-pro-free',
+    });
+    // Same last-line normalization as Kokoro (emoji stripped).
+    expect(JSON.parse(String(init.body))).toEqual({
+      text: 'Hello there',
+      reference_id: 'voice-123',
+      format: 'mp3',
+    });
+    expect(mod.ttsStatus().counters.ok).toBe(1);
+  });
+
+  it('picks the voice from FISH_VOICE_ID and sends optional speed/latency', async () => {
+    const fetchMock = vi.fn(async () => new Response(new Uint8Array([1]), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const mod = await load({
+      TTS_ENABLED: 'true',
+      TTS_PROVIDER: 'fishaudio',
+      FISH_API_KEY: 'Bearer test-key',
+      FISH_VOICE_ID: 'new-voice',
+      FISH_REFERENCE_ID: 'old-voice',
+      FISH_TTS_SPEED: '5',
+      FISH_TTS_LATENCY: 'Balanced',
+    });
+    await mod.synthesize('Hi.', new AbortController().signal);
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer test-key' });
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      reference_id: 'new-voice',
+      prosody: { speed: 2 },
+      latency: 'balanced',
+    });
+  });
+
+  it('reports a rejected key on the health status instead of failing silently', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('no', { status: 401 })),
+    );
+    const mod = await load({ TTS_ENABLED: 'true', TTS_PROVIDER: 'fishaudio', FISH_API_KEY: 'bad' });
+    await expect(mod.synthesize('Hi.', new AbortController().signal)).rejects.toMatchObject({
+      status: 401,
+    });
+    expect(mod.ttsStatus().upstreamError).toMatch(/401.*FISH_API_KEY/);
+  });
+
+  it('surfaces upstream errors with their HTTP status', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('slow down', { status: 429 })),
+    );
+    const mod = await load({ TTS_ENABLED: 'true', TTS_PROVIDER: 'fishaudio', FISH_API_KEY: 'k' });
+    await expect(mod.synthesize('Hi.', new AbortController().signal)).rejects.toMatchObject({
+      name: 'FishAudioError',
+      status: 429,
+    });
+    expect(mod.ttsStatus().counters.failures).toBe(1);
   });
 });

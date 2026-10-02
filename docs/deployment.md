@@ -96,6 +96,13 @@ TRANSCRIPTION_MAX_BYTES=2097152
 
 # TTS (neural voice replies; optional — falls back to browser voice if absent)
 TTS_ENABLED=true
+TTS_PROVIDER=kokoro   # or fishaudio (hosted; see "TTS Setup")
+# FISH_API_KEY=       # fishaudio only
+# FISH_TTS_MODEL=s2.1-pro-free
+# FISH_VOICE_ID=711cf3ed00ab441a8f54a45058047b7a  # id from fish.audio/m/<id>
+# FISH_TTS_SPEED=1    # 0.5-2.0
+# FISH_TTS_LATENCY=   # low | balanced | normal
+# FISH_TTS_FORMAT=mp3 # mp3 | wav | opus
 # TTS_MODEL_PATH defaults to server/.tts-models/kokoro-multi-lang-v1_0
 TTS_MODEL_VERSION=v1_0
 TTS_SID=3      # af_heart
@@ -225,6 +232,23 @@ cd client && npm run build
 
 Voice replies use **Kokoro** via the `sherpa-onnx-node` native addon, running
 **in-process** (no sidecar — keeps the app on a single Render free web service).
+
+**Switching provider**: `TTS_PROVIDER=fishaudio` sends each chunk to the hosted
+Fish Audio API instead (`server/src/services/fishAudioTts.ts`). Set
+`FISH_API_KEY`; `FISH_TTS_MODEL` (`s2.1-pro-free`), `FISH_VOICE_ID` (the
+voice — the id in a voice's `fish.audio/m/<id>` URL; `FISH_REFERENCE_ID` is
+the older name), `FISH_TTS_SPEED` (0.5–2.0), `FISH_TTS_LATENCY`
+(`low`/`balanced`/`normal`) and `FISH_TTS_FORMAT` (`mp3`, `wav` or `opus`) are
+optional. Kokoro is
+then never loaded (no model download, no ~600 MB RSS), `TTS_CONCURRENCY`
+defaults to 4, and the queue, `TTS_INFERENCE_TIMEOUT_MS` (which also aborts the
+upstream request), health endpoint and `tts.synth` log lines all still apply.
+An upstream 429 answers 503 + `Retry-After: 1`; any other upstream failure, or
+a missing key, answers 503 and the client falls back as below. A rejected key,
+missing credit or unknown voice/model (HTTP 400/401/402/403/404) is printed
+once to the server console and shown as `error` on `/api/tts/health`. Fish Audio
+usage may be billed per character, and reply text leaves the server.
+The steps below are Kokoro-only.
 
 1. **Download the model** (one-time, ~360 MB, gitignored). Defaults to Kokoro
    v1.0 multi-lang (53 speakers), which sounds markedly less robotic than the
