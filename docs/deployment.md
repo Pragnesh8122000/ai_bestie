@@ -83,6 +83,8 @@ GOOGLE_CLIENT_ID=1234567890-example.apps.googleusercontent.com
 GEMINI_API_KEY=...            # Google AI Studio — primary chat provider
 GEMINI_MODEL=gemini-3.8-flash
 GEMINI_FALLBACK_MODELS=gemini-3.7-flash,gemini-3.5-flash-lite
+GEMINI_VOICE_MODELS=gemini-3.5-flash-lite,gemini-flash-lite-latest  # voice turns only
+LLM_VOICE_HEDGE_MS=2000       # voice: race the next model if no token by then
 OPENROUTER_API_KEY=...        # OpenRouter — fallback (free models)
 OPENROUTER_MODEL=google/gemma-4-31b-it:free
 
@@ -94,6 +96,13 @@ TRANSCRIPTION_MAX_BYTES=2097152
 
 # TTS (neural voice replies; optional — falls back to browser voice if absent)
 TTS_ENABLED=true
+TTS_PROVIDER=kokoro   # or fishaudio (hosted; see "TTS Setup")
+# FISH_API_KEY=       # fishaudio only
+# FISH_TTS_MODEL=s2.1-pro-free
+# FISH_VOICE_ID=711cf3ed00ab441a8f54a45058047b7a  # id from fish.audio/m/<id>
+# FISH_TTS_SPEED=1    # 0.5-2.0
+# FISH_TTS_LATENCY=   # low | balanced | normal
+# FISH_TTS_FORMAT=mp3 # mp3 | wav | opus
 # TTS_MODEL_PATH defaults to server/.tts-models/kokoro-multi-lang-v1_0
 TTS_MODEL_VERSION=v1_0
 TTS_SID=3      # af_heart
@@ -110,6 +119,13 @@ TTS_SPEED=0.95
 # Always on stdout; set a directory to also write voice-metrics-YYYY-MM-DD.jsonl.
 # Defaults to server/logs outside production, off in production.
 # VOICE_METRICS_DIR=
+#
+# Each voice turn carries one id (X-Voice-Turn header) through the browser's
+# stage timeline (voice.turn.client, posted to /api/metrics/voice) and the
+# server's stt.transcribe / chat.turn / tts.synth lines. Join them with:
+#   npm run voice-report -w server [-- --last 20 | --file <jsonl> | --json]
+# Production has no file by default: set VOICE_METRICS_DIR or save stdout and
+# pass --file.
 
 # No Anthropic, OpenAI chat-generation, Voyage, or Redis keys are used.
 ```
@@ -216,6 +232,23 @@ cd client && npm run build
 
 Voice replies use **Kokoro** via the `sherpa-onnx-node` native addon, running
 **in-process** (no sidecar — keeps the app on a single Render free web service).
+
+**Switching provider**: `TTS_PROVIDER=fishaudio` sends each chunk to the hosted
+Fish Audio API instead (`server/src/services/fishAudioTts.ts`). Set
+`FISH_API_KEY`; `FISH_TTS_MODEL` (`s2.1-pro-free`), `FISH_VOICE_ID` (the
+voice — the id in a voice's `fish.audio/m/<id>` URL; `FISH_REFERENCE_ID` is
+the older name), `FISH_TTS_SPEED` (0.5–2.0), `FISH_TTS_LATENCY`
+(`low`/`balanced`/`normal`) and `FISH_TTS_FORMAT` (`mp3`, `wav` or `opus`) are
+optional. Kokoro is
+then never loaded (no model download, no ~600 MB RSS), `TTS_CONCURRENCY`
+defaults to 4, and the queue, `TTS_INFERENCE_TIMEOUT_MS` (which also aborts the
+upstream request), health endpoint and `tts.synth` log lines all still apply.
+An upstream 429 answers 503 + `Retry-After: 1`; any other upstream failure, or
+a missing key, answers 503 and the client falls back as below. A rejected key,
+missing credit or unknown voice/model (HTTP 400/401/402/403/404) is printed
+once to the server console and shown as `error` on `/api/tts/health`. Fish Audio
+usage may be billed per character, and reply text leaves the server.
+The steps below are Kokoro-only.
 
 1. **Download the model** (one-time, ~360 MB, gitignored). Defaults to Kokoro
    v1.0 multi-lang (53 speakers), which sounds markedly less robotic than the

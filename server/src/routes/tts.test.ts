@@ -10,6 +10,7 @@ vi.mock('../services/ttsService', async () => {
 import app from '../app';
 import { synthesize } from '../services/ttsService';
 import { TtsBusyError, TtsQueueTimeoutError } from '../services/ttsQueue';
+import { FishAudioError } from '../services/fishAudioTts';
 import { generateToken } from '../utils/jwt';
 
 const token = generateToken('tts-route-user');
@@ -24,7 +25,13 @@ function named(name: string): Error {
 describe('/api/tts', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(synthesize).mockResolvedValue({ wav, audioMs: 500, queueWaitMs: 0, inferMs: 300 });
+    vi.mocked(synthesize).mockResolvedValue({
+      audio: wav,
+      contentType: 'audio/wav',
+      audioMs: 500,
+      queueWaitMs: 0,
+      inferMs: 300,
+    });
   });
 
   it('requires auth to synthesize', async () => {
@@ -79,6 +86,52 @@ describe('/api/tts', () => {
       expect(res.headers['retry-after']).toBeUndefined();
       expect(res.body.code).toBe('TTS_TIMEOUT');
     }
+  });
+
+  it("serves the provider's own audio format (Fish Audio mp3)", async () => {
+    const mp3 = Buffer.from('ID3fake-mp3');
+    vi.mocked(synthesize).mockResolvedValue({
+      audio: mp3,
+      contentType: 'audio/mpeg',
+      audioMs: null,
+      queueWaitMs: 0,
+      inferMs: 400,
+    });
+    const res = await request(app)
+      .post('/api/tts')
+      .set('Cookie', `token=${token}`)
+      .send({ text: 'Hi.' })
+      .buffer(true)
+      .parse((r, cb) => {
+        const chunks: Buffer[] = [];
+        r.on('data', (c: Buffer) => chunks.push(c));
+        r.on('end', () => cb(null, Buffer.concat(chunks)));
+      })
+      .expect(200);
+    expect(res.headers['content-type']).toBe('audio/mpeg');
+    expect(Buffer.compare(res.body, mp3)).toBe(0);
+  });
+
+  it('treats a hosted-provider rate limit like a full queue (503 + Retry-After)', async () => {
+    vi.mocked(synthesize).mockRejectedValue(new FishAudioError(429));
+    const res = await request(app)
+      .post('/api/tts')
+      .set('Cookie', `token=${token}`)
+      .send({ text: 'Hi.' })
+      .expect(503);
+    expect(res.headers['retry-after']).toBe('1');
+    expect(res.body.code).toBe('TTS_BUSY');
+  });
+
+  it('answers a rejected provider key with TTS_UNAVAILABLE and no Retry-After', async () => {
+    vi.mocked(synthesize).mockRejectedValue(new FishAudioError(401));
+    const res = await request(app)
+      .post('/api/tts')
+      .set('Cookie', `token=${token}`)
+      .send({ text: 'Hi.' })
+      .expect(503);
+    expect(res.headers['retry-after']).toBeUndefined();
+    expect(res.body.code).toBe('TTS_UNAVAILABLE');
   });
 
   it('turns unexpected failures into a fallback-friendly 503', async () => {

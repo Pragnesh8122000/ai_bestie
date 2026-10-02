@@ -4,7 +4,8 @@ import { config } from '../config';
 import { requireAuth, transcriptionRateLimiter } from '../middleware/auth';
 import { supportedTranscriptionMimeTypes, transcribeAudio } from '../services/transcriptionService';
 import { AppError, catchAsync } from '../utils/errors';
-import { logMetric } from '../utils/metricsLog';
+import { logMetric, voiceTurnId } from '../utils/metricsLog';
+import { formatIst } from '../utils/time';
 
 const router = Router();
 
@@ -51,6 +52,7 @@ router.post(
     const startedAtMs = Date.now();
     const base = {
       reqId: randomUUID(),
+      turnId: voiceTurnId(req.get('X-Voice-Turn')),
       userId: req.userId,
       model: config.transcription.model,
       mimeType,
@@ -61,7 +63,7 @@ router.post(
       const text = await transcribeAudio(req.body, mimeType, ac.signal);
       logMetric('stt.transcribe', {
         ...base,
-        startedAt: new Date(startedAtMs).toISOString(),
+        startedAt: formatIst(startedAtMs),
         outcome: 'ok',
         latencyMs: Date.now() - startedAtMs,
         textChars: text.length,
@@ -70,7 +72,7 @@ router.post(
     } catch (error) {
       logMetric('stt.transcribe', {
         ...base,
-        startedAt: new Date(startedAtMs).toISOString(),
+        startedAt: formatIst(startedAtMs),
         outcome: ac.signal.aborted ? 'client_closed' : 'error',
         latencyMs: Date.now() - startedAtMs,
         errorCode: error instanceof AppError ? (error.code ?? error.statusCode) : 'UNEXPECTED',

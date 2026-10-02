@@ -107,7 +107,13 @@ describe('voice turn capture', () => {
 
     await startVoiceTurn().promise;
 
-    expect(listenOnce).toHaveBeenCalledWith('en-US', undefined, 30_000, expect.any(Function));
+    expect(listenOnce).toHaveBeenCalledWith(
+      'en-US',
+      undefined,
+      30_000,
+      expect.any(Function),
+      expect.anything(),
+    );
   });
 
   it("skips Brave's doomed browser recognition probe and starts the fallback immediately", async () => {
@@ -134,7 +140,13 @@ describe('voice turn capture', () => {
 
     await startVoiceTurn(undefined, 1_000, onInterim).promise;
 
-    expect(listenOnce).toHaveBeenCalledWith('en-US', onInterim, 1_000, expect.any(Function));
+    expect(listenOnce).toHaveBeenCalledWith(
+      'en-US',
+      onInterim,
+      1_000,
+      expect.any(Function),
+      expect.anything(),
+    );
   });
 
   it('reports Safari/native speech-end and transcript-ready as separate latency stages', async () => {

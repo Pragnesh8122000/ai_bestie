@@ -122,3 +122,13 @@ export const transcriptionRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+// Browser-side voice timings: a handful of small posts per spoken turn.
+export const metricsRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: requestKey,
+  message: { success: false, message: 'Too many metrics reports.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});

@@ -7,6 +7,12 @@ import { AppError } from '../utils/errors';
 import { logMetric } from '../utils/metricsLog';
 import { TtsQueue } from './ttsQueue';
 import { speakableText } from './ttsText';
+import {
+  fishConfigError,
+  fishContentType,
+  fishSynthesize,
+  fishUpstreamError,
+} from './fishAudioTts';
 
 /**
  * In-process neural TTS via sherpa-onnx (Kokoro v1.0 by default, v0_19
@@ -33,9 +39,16 @@ import { speakableText } from './ttsText';
  *
  * If the model is missing or fails to load, `synthesize` throws AppError(503)
  * and the client falls back to browser speechSynthesis for that chunk.
+ *
+ * TTS_PROVIDER=fishaudio swaps the engine for the hosted Fish Audio API
+ * (fishAudioTts.ts): Kokoro is then never loaded, and the same queue,
+ * timeouts, cancellation, counters and log lines apply to its requests.
  */
 
+const PROVIDER = config.tts.provider;
+
 let tts: OfflineTts | null = null;
+let fishReady = false;
 let loadAttempted = false;
 let loadError: string | null = null;
 let loadingPromise: Promise<void> | null = null;
@@ -85,9 +98,7 @@ function voiceTable(): { allowed: number[]; fallback: number } {
 export function resolveSid(): number {
   const { allowed, fallback } = voiceTable();
   const sid = config.tts.sid;
-  return typeof sid === 'number' && Number.isInteger(sid) && allowed.includes(sid)
-    ? sid
-    : fallback;
+  return typeof sid === 'number' && Number.isInteger(sid) && allowed.includes(sid) ? sid : fallback;
 }
 
 const VOICE_SID = resolveSid();
@@ -141,11 +152,7 @@ export function resolveNumThreads(raw: string = config.tts.numThreads): number {
 
 const NUM_THREADS = resolveNumThreads();
 
-const queue = new TtsQueue(
-  config.tts.concurrency,
-  config.tts.maxQueue,
-  config.tts.queueTimeoutMs,
-);
+const queue = new TtsQueue(config.tts.concurrency, config.tts.maxQueue, config.tts.queueTimeoutMs);
 
 function modelFilesPresent(): boolean {
   const dir = config.tts.modelDir;
@@ -176,6 +183,12 @@ export async function initTts(): Promise<void> {
     try {
       if (!config.tts.enabled) {
         loadError = 'TTS disabled (TTS_ENABLED=false)';
+        return;
+      }
+      if (PROVIDER === 'fishaudio') {
+        loadError = fishConfigError();
+        fishReady = loadError === null;
+        warm = true;
         return;
       }
       if (!modelFilesPresent()) {
@@ -242,9 +255,16 @@ async function warmUp(): Promise<void> {
   }
 }
 
+function isAvailable(): boolean {
+  return PROVIDER === 'fishaudio' ? fishReady : tts !== null;
+}
+
 export interface TtsStatus {
+  provider: typeof PROVIDER;
   available: boolean;
   error: string | null;
+  /** Last persistent hosted-provider failure (bad key, no credit, ...). */
+  upstreamError: string | null;
   sampleRate: number | null;
   sid: number;
   speed: number;
@@ -260,12 +280,14 @@ export interface TtsStatus {
 
 export function ttsStatus(): TtsStatus {
   return {
-    available: tts !== null,
+    provider: PROVIDER,
+    available: isAvailable(),
     error: loadError,
+    upstreamError: PROVIDER === 'fishaudio' ? fishUpstreamError() : null,
     sampleRate: tts ? tts.sampleRate : null,
     sid: VOICE_SID,
     speed: VOICE_SPEED,
-    modelVersion: config.tts.modelVersion,
+    modelVersion: PROVIDER === 'fishaudio' ? config.tts.fish.model : config.tts.modelVersion,
     numThreads: NUM_THREADS,
     warm,
     loadMs,
@@ -280,6 +302,7 @@ export function ttsStatus(): TtsStatus {
 export interface TtsLogContext {
   reqId?: string;
   userId?: string;
+  turnId?: string;
   generation?: string;
   chunk?: string;
   lang?: string;
@@ -292,7 +315,7 @@ export interface TtsLogContext {
  */
 export function logTts(fields: Record<string, unknown>): void {
   const { evt = 'tts', ...rest } = fields;
-  logMetric(String(evt), { provider: 'kokoro', ...rest });
+  logMetric(String(evt), { provider: PROVIDER, ...rest });
 }
 
 export class TtsTimeoutError extends Error {
@@ -303,15 +326,25 @@ export class TtsTimeoutError extends Error {
 }
 
 export interface SynthesisResult {
-  wav: Buffer;
-  audioMs: number;
+  audio: Buffer;
+  contentType: string;
+  /** Null when the provider returns compressed audio of unknown length. */
+  audioMs: number | null;
   queueWaitMs: number;
   inferMs: number;
 }
 
+/** One finished inference, before encoding/accounting. */
+interface RawAudio {
+  audio: Buffer;
+  contentType: string;
+  audioMs: number | null;
+}
+
 /**
- * Synthesize `text` to a 16-bit mono PCM WAV. Throws AppError(503) if the
- * model is unavailable, TtsBusyError / TtsQueueTimeoutError / TtsTimeoutError
+ * Synthesize `text` to audio: a 16-bit mono PCM WAV from Kokoro, or the
+ * configured Fish Audio format. Throws AppError(503) if the engine is
+ * unavailable, TtsBusyError / TtsQueueTimeoutError / TtsTimeoutError
  * under load, and TtsCancelledError once `signal` fires — a request whose
  * client has gone is dropped from the queue before it reaches the model.
  */
@@ -321,7 +354,7 @@ export async function synthesize(
   ctx: TtsLogContext = {},
 ): Promise<SynthesisResult> {
   await initTts();
-  if (!tts) throw new AppError('TTS unavailable', 503);
+  if (!isAvailable()) throw new AppError('TTS unavailable', 503);
 
   const trimmed = speakableText(text);
   if (!text.trim()) throw new AppError('Nothing to synthesize', 400);
@@ -329,20 +362,52 @@ export async function synthesize(
   const base = {
     evt: 'tts.synth',
     ...ctx,
-    model: config.tts.modelVersion,
-    voice: VOICE_SID,
+    model: PROVIDER === 'fishaudio' ? config.tts.fish.model : config.tts.modelVersion,
+    voice: PROVIDER === 'fishaudio' ? config.tts.fish.voiceId : VOICE_SID,
     textLen: text.length,
   };
 
   // Emoji-only (or similar) input: answer with a moment of silence rather
   // than an error, so the client doesn't treat it as a failed engine.
-  if (!trimmed) return { wav: encodeWav(new Float32Array(1200), 24_000), audioMs: 50, queueWaitMs: 0, inferMs: 0 };
+  if (!trimmed) {
+    return {
+      audio: encodeWav(new Float32Array(1200), 24_000),
+      contentType: 'audio/wav',
+      audioMs: 50,
+      queueWaitMs: 0,
+      inferMs: 0,
+    };
+  }
+
+  // Aborted when the client leaves or the inference timeout fires, so a
+  // hosted request is actually cancelled (Kokoro's native call can't be).
+  const upstream = new AbortController();
+  const abortUpstream = () => upstream.abort();
+  signal.addEventListener('abort', abortUpstream, { once: true });
+
+  const infer = async (): Promise<RawAudio> => {
+    if (PROVIDER === 'fishaudio') {
+      const audio = await fishSynthesize(trimmed, upstream.signal);
+      return { audio, contentType: fishContentType(), audioMs: null };
+    }
+    // No onProgress: see the module header — the addon's progress path
+    // crashes the process. Every chunk uses the same pinned female speaker id.
+    const out: GeneratedAudio = await model!.generateAsync({
+      text: trimmed,
+      generationConfig: new GenerationConfig({ sid: VOICE_SID, speed: VOICE_SPEED }),
+    });
+    return {
+      audio: encodeWav(out.samples, out.sampleRate),
+      contentType: 'audio/wav',
+      audioMs: Math.round((out.samples.length / out.sampleRate) * 1000),
+    };
+  };
 
   const requestedAt = Date.now();
   let queueWaitMs = 0;
   let startedAt = 0;
   try {
-    const { value: audio } = await new Promise<{ value: GeneratedAudio; waitMs: number }>(
+    const { value: result } = await new Promise<{ value: RawAudio; waitMs: number }>(
       (resolve, reject) => {
         let timer: ReturnType<typeof setTimeout> | undefined;
         queue
@@ -350,20 +415,17 @@ export async function synthesize(
             () => {
               // Re-check at dequeue: the client may have left while waiting.
               if (signal.aborted) return Promise.reject(new AppError('TTS cancelled', 499));
-              // No onProgress: see the module header — the addon's progress
-              // path crashes the process. Every chunk uses the same pinned
-              // female speaker id.
-              return model.generateAsync({
-                text: trimmed,
-                generationConfig: new GenerationConfig({ sid: VOICE_SID, speed: VOICE_SPEED }),
-              });
+              return infer();
             },
             {
               signal,
               onStart: (waitMs) => {
                 queueWaitMs = waitMs;
                 startedAt = Date.now();
-                timer = setTimeout(() => reject(new TtsTimeoutError()), config.tts.inferenceTimeoutMs);
+                timer = setTimeout(() => {
+                  reject(new TtsTimeoutError());
+                  abortUpstream();
+                }, config.tts.inferenceTimeoutMs);
               },
             },
           )
@@ -373,16 +435,28 @@ export async function synthesize(
     );
 
     const inferMs = Date.now() - startedAt;
-    const audioMs = Math.round((audio.samples.length / audio.sampleRate) * 1000);
+    const { audioMs } = result;
     if (signal.aborted) throw new AppError('TTS cancelled', 499);
     counters.ok++;
     lastInferMs = inferMs;
     lastRtf = audioMs ? +(inferMs / audioMs).toFixed(3) : null;
-    logTts({ ...base, outcome: 'ok', queueWaitMs, inferMs, audioMs, rtf: lastRtf });
-    return { wav: encodeWav(audio.samples, audio.sampleRate), audioMs, queueWaitMs, inferMs };
+    logTts({
+      ...base,
+      outcome: 'ok',
+      queueWaitMs,
+      inferMs,
+      audioMs,
+      bytes: result.audio.length,
+      rtf: lastRtf,
+    });
+    return { ...result, queueWaitMs, inferMs };
   } catch (e) {
     const name = (e as Error).name;
-    const cancelled = name === 'TtsCancelledError' || (e instanceof AppError && e.statusCode === 499);
+    // A hosted request aborted because the client left surfaces as AbortError.
+    const cancelled =
+      name === 'TtsCancelledError' ||
+      (e instanceof AppError && e.statusCode === 499) ||
+      (signal.aborted && name === 'AbortError');
     if (cancelled) counters.cancelled++;
     else if (name === 'TtsBusyError') counters.busy++;
     else if (name === 'TtsTimeoutError' || name === 'TtsQueueTimeoutError') counters.timeouts++;
@@ -394,8 +468,13 @@ export async function synthesize(
       // Jobs that never left the queue report how long they waited in it.
       queueWaitMs: startedAt ? queueWaitMs : Date.now() - requestedAt,
       inferMs: startedAt ? Date.now() - startedAt : 0,
+      ...(e instanceof Error && 'status' in e
+        ? { upstreamStatus: (e as { status: number }).status }
+        : {}),
     });
     throw e;
+  } finally {
+    signal.removeEventListener('abort', abortUpstream);
   }
 }
 

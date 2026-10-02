@@ -1,3 +1,5 @@
+import { istDate, istYear } from './time';
+
 export const TITLE_MAX_LENGTH = 50;
 export const PREVIEW_MAX_LENGTH = 120;
 export const DEFAULT_TITLE = 'New Conversation';
@@ -43,9 +45,7 @@ export function formatRelative(iso: string | undefined, now: Date = new Date()):
   if (diffSec < 60) return 'now';
   if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m`;
   if (diffSec < 86_400) return `${Math.floor(diffSec / 3600)}h`;
-  if (diffSec < 7 * 86_400) return then.toLocaleDateString(undefined, { weekday: 'short' });
-  if (then.getFullYear() === now.getFullYear()) {
-    return then.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
-  }
-  return then.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+  if (diffSec < 7 * 86_400) return istDate(then, { weekday: 'short' });
+  if (istYear(then) === istYear(now)) return istDate(then, { day: 'numeric', month: 'short' });
+  return istDate(then, { month: 'short', year: 'numeric' });
 }

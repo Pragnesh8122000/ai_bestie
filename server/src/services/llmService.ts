@@ -20,10 +20,21 @@ export interface StreamOptions {
   onToken?: (token: string) => void;
   onEnd?: (fullText: string) => void;
   signal?: AbortSignal;
-  /** Skip same-model retry backoff for interactive voice turns. */
+  /**
+   * Interactive voice turn: use the voice model list, skip same-model retry
+   * backoff, and hedge slow models (see `streamChatHedged`).
+   */
   latencyMode?: boolean;
-  /** Called once the upstream stream is open, with which model won and how many were skipped. */
-  onProvider?: (info: { provider: string; model: string; failedAttempts: number }) => void;
+  /** Called once a model wins, with which one, how many failed, and how many requests were started. */
+  onProvider?: (info: ProviderInfo) => void;
+}
+
+export interface ProviderInfo {
+  provider: string;
+  model: string;
+  failedAttempts: number;
+  /** Upstream requests started for this turn (> failedAttempts + 1 when hedging raced). */
+  attempts?: number;
 }
 
 interface Provider {
@@ -31,8 +42,8 @@ interface Provider {
   url: string;
   apiKey: string;
   models: string[];
-  // Extra request-body fields specific to this provider (merged into the payload).
-  extraBody?: Record<string, unknown>;
+  // Extra request-body fields specific to this provider and model (merged into the payload).
+  extraBody?: (model: string) => Record<string, unknown>;
   // Extra HTTP headers specific to this provider.
   extraHeaders?: Record<string, string>;
 }
@@ -85,7 +96,14 @@ const sleep = (ms: number, signal?: AbortSignal) =>
     );
   });
 
-function buildProviders(): Provider[] {
+// Gemini Flash models "think" by default, delaying the first visible token;
+// "none" turns that off. Flash-Lite models reject "none" with a 400 but
+// accept "minimal" (verified 2026-10).
+export function geminiReasoningEffort(model: string): 'none' | 'minimal' {
+  return /lite/i.test(model) ? 'minimal' : 'none';
+}
+
+function buildProviders(voice = false): Provider[] {
   const providers: Provider[] = [];
 
   if (config.llm.geminiApiKey) {
@@ -93,11 +111,12 @@ function buildProviders(): Provider[] {
       name: 'gemini',
       url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
       apiKey: config.llm.geminiApiKey,
-      models: uniqueModels([config.llm.geminiModel, ...config.llm.geminiFallbackModels]),
-      // Gemini 2.5/Flash are "thinking" models — without this they spend the
-      // token budget on internal reasoning and the first visible token is
-      // delayed. "none" gives direct, fast replies (ideal for simple chat).
-      extraBody: { reasoning_effort: 'none' },
+      models: uniqueModels(
+        voice
+          ? config.llm.geminiVoiceModels
+          : [config.llm.geminiModel, ...config.llm.geminiFallbackModels],
+      ),
+      extraBody: (model) => ({ reasoning_effort: geminiReasoningEffort(model) }),
     });
   }
 
@@ -258,7 +277,7 @@ export async function streamChat(options: StreamOptions): Promise<string> {
   const { systemPrompt, messages, maxTokens = 1024, onToken, onEnd, signal, latencyMode, onProvider } =
     options;
 
-  const providers = buildProviders();
+  const providers = buildProviders(latencyMode);
   if (providers.length === 0) {
     throw new Error(
       'No LLM key set. Add GEMINI_API_KEY (primary) and/or OPENROUTER_API_KEY to /.env or /server/.env',
@@ -270,6 +289,10 @@ export async function streamChat(options: StreamOptions): Promise<string> {
     max_tokens: maxTokens,
     messages: [{ role: 'system', content: systemPrompt }, ...messages],
   };
+
+  if (latencyMode) {
+    return streamChatHedged(providers, payload, options);
+  }
 
   const failures: AttemptFailure[] = [];
   for (const provider of providers) {
@@ -286,23 +309,15 @@ export async function streamChat(options: StreamOptions): Promise<string> {
         provider.apiKey,
         model,
         payload,
-        provider.extraBody,
+        provider.extraBody?.(model),
         provider.extraHeaders,
         signal,
-        latencyMode ? 1 : RETRIES_PER_MODEL,
       );
       if (ok && response) {
         onProvider?.({ provider: provider.name, model, failedAttempts: failures.length });
         return consumeStream(response, onToken, onEnd, signal);
       }
-      const kind = classifyFailure(status, error);
-      failures.push({ provider: provider.name, model, status, kind });
-      if (status === 429) {
-        cooldownUntil.set(
-          key,
-          Date.now() + (response ? retryAfterMs(response) : DEFAULT_COOLDOWN_MS),
-        );
-      }
+      failures.push(recordFailure(provider.name, model, status, error, response));
       // Only auth errors are truly provider-wide. A 400/404 is usually
       // model-specific (bad model id / unsupported param) — continue to the
       // next model rather than skipping the rest of this provider's list.
@@ -313,6 +328,160 @@ export async function streamChat(options: StreamOptions): Promise<string> {
   }
 
   throw providerError(failures);
+}
+
+function recordFailure(
+  provider: string,
+  model: string,
+  status: number,
+  error: string,
+  response: Response | null,
+): AttemptFailure {
+  if (status === 429) {
+    cooldownUntil.set(
+      `${provider}/${model}`,
+      Date.now() + (response ? retryAfterMs(response) : DEFAULT_COOLDOWN_MS),
+    );
+  }
+  return { provider, model, status, kind: classifyFailure(status, error) };
+}
+
+// At most this many upstream requests race at once, to spare free-tier quota.
+const MAX_HEDGED_IN_FLIGHT = 2;
+
+/**
+ * Voice-turn variant of the provider chain. Free-tier latency is bursty
+ * (the same model answers in 0.7s or 12s minutes apart), so instead of
+ * waiting on one model we hedge: start the first candidate, and if it has
+ * produced no token after `voiceHedgeDelayMs` (or fails), start the next one
+ * alongside it. The first request to yield a token wins and the others are
+ * aborted. Nothing is cut off on a timer, so a slow-but-working model still
+ * answers when every candidate is slow.
+ */
+function streamChatHedged(
+  providers: Provider[],
+  payload: Record<string, unknown>,
+  { onToken, onEnd, signal, onProvider }: StreamOptions,
+): Promise<string> {
+  const candidates = providers.flatMap((provider) =>
+    provider.models.map((model) => ({ provider, model })),
+  );
+  const failures: AttemptFailure[] = [];
+  const authFailed = new Set<string>();
+  const inFlight = new Set<AbortController>();
+  let started = 0;
+  let next = 0;
+  let winner: AbortController | null = null;
+  let hedgeTimer: ReturnType<typeof setTimeout> | undefined;
+
+  return new Promise<string>((resolve, reject) => {
+    let settled = false;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(hedgeTimer);
+      signal?.removeEventListener('abort', onOuterAbort);
+      fn();
+    };
+    const onOuterAbort = () => {
+      for (const controller of inFlight) controller.abort();
+      // Once a winner is streaming, let it settle the same way the
+      // sequential path does when its stream is aborted.
+      if (!winner) finish(() => reject(new DOMException('Aborted', 'AbortError')));
+    };
+    if (signal?.aborted) return onOuterAbort();
+    signal?.addEventListener('abort', onOuterAbort, { once: true });
+
+    const failIfExhausted = () => {
+      if (!winner && inFlight.size === 0 && next >= candidates.length) {
+        finish(() => reject(providerError(failures)));
+      }
+    };
+
+    const launchNext = () => {
+      clearTimeout(hedgeTimer);
+      if (settled || winner || inFlight.size >= MAX_HEDGED_IN_FLIGHT) return;
+      while (next < candidates.length) {
+        const { provider, model } = candidates[next++];
+        if (authFailed.has(provider.name)) continue;
+        const cooldown = cooldownUntil.get(`${provider.name}/${model}`);
+        if (cooldown && cooldown > Date.now()) {
+          failures.push({ provider: provider.name, model, status: 429, kind: 'rate-limit' });
+          continue;
+        }
+        void attempt(provider, model);
+        if (next < candidates.length) {
+          hedgeTimer = setTimeout(launchNext, config.llm.voiceHedgeDelayMs);
+        }
+        return;
+      }
+      failIfExhausted();
+    };
+
+    const attempt = async (provider: Provider, model: string) => {
+      const controller = new AbortController();
+      inFlight.add(controller);
+      started++;
+      const claim = () => {
+        if (winner) return winner === controller;
+        winner = controller;
+        clearTimeout(hedgeTimer);
+        for (const other of inFlight) if (other !== controller) other.abort();
+        onProvider?.({
+          provider: provider.name,
+          model,
+          failedAttempts: failures.length,
+          attempts: started,
+        });
+        return true;
+      };
+
+      try {
+        const { response, ok, error, status } = await openStream(
+          provider.url,
+          provider.apiKey,
+          model,
+          payload,
+          provider.extraBody?.(model),
+          provider.extraHeaders,
+          controller.signal,
+          1,
+        );
+        if (!ok || !response) {
+          inFlight.delete(controller);
+          if (winner || settled) return;
+          failures.push(recordFailure(provider.name, model, status, error, response));
+          if (status === 401 || status === 403) authFailed.add(provider.name);
+          launchNext();
+          return;
+        }
+        const text = await consumeStream(
+          response,
+          (token) => {
+            if (claim()) onToken?.(token);
+          },
+          (fullText) => {
+            // A stream that ended without any token still counts as an answer.
+            if (claim()) onEnd?.(fullText);
+          },
+          controller.signal,
+        );
+        inFlight.delete(controller);
+        if (winner === controller) finish(() => resolve(text));
+      } catch (error) {
+        inFlight.delete(controller);
+        if (winner === controller) {
+          finish(() => reject(error));
+        } else if (!controller.signal.aborted && !winner) {
+          // A stream that broke before its first token is just another failure.
+          failures.push({ provider: provider.name, model, status: 0, kind: 'network' });
+          launchNext();
+        }
+      }
+    };
+
+    launchNext();
+  });
 }
 
 async function consumeStream(

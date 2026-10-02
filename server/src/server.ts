@@ -56,13 +56,17 @@ const start = async () => {
       initTts()
         .then(() => {
           const s = ttsStatus();
-          if (s.available) {
+          if (s.available && s.provider === 'fishaudio') {
+            console.log(`TTS: Fish Audio (${s.modelVersion}) — hosted voice replies ready`);
+          } else if (s.available) {
             console.log(`TTS: Kokoro loaded (${s.sampleRate} Hz) — neural voice replies ready`);
           } else {
             console.warn(
               `TTS: unavailable — ${s.error}. Voice replies will use browser speechSynthesis.`,
             );
-            console.warn('   Download the model: npm run download-tts-model -w server');
+            if (s.provider === 'kokoro') {
+              console.warn('   Download the model: npm run download-tts-model -w server');
+            }
           }
         })
         .catch(() => {

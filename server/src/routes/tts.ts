@@ -4,7 +4,9 @@ import { z } from 'zod';
 import { catchAsync, AppError } from '../utils/errors';
 import { requireAuth, ttsRateLimiter } from '../middleware/auth';
 import { synthesize, ttsStatus } from '../services/ttsService';
+import { FishAudioError, isFishConfigFailure } from '../services/fishAudioTts';
 import { config } from '../config';
+import { voiceTurnId } from '../utils/metricsLog';
 
 const router = Router();
 
@@ -13,9 +15,10 @@ const router = Router();
 router.get('/health', (_req, res) => {
   const s = ttsStatus();
   res.status(s.available ? 200 : 503).json({
+    provider: s.provider,
     available: s.available,
     warm: s.warm,
-    error: s.available ? null : s.error,
+    error: s.available ? s.upstreamError : s.error,
     modelVersion: s.modelVersion,
     numThreads: s.numThreads,
     loadMs: s.loadMs,
@@ -62,22 +65,25 @@ router.post(
     });
 
     try {
-      const { wav } = await synthesize(input.text, ac.signal, {
+      const { audio, contentType } = await synthesize(input.text, ac.signal, {
         reqId: randomUUID(),
         userId: req.userId,
+        turnId: voiceTurnId(req.get('X-Voice-Turn')),
         generation: correlationId(req.get('X-TTS-Generation')),
         chunk: correlationId(req.get('X-TTS-Chunk')),
         lang: input.lang,
       });
       if (clientClosed || res.destroyed || res.writableEnded) return;
-      res.set('Content-Type', 'audio/wav');
+      res.set('Content-Type', contentType);
       res.set('Cache-Control', 'no-store');
       res.set('X-Accel-Buffering', 'no'); // don't let nginx buffer audio
-      res.send(wav);
+      res.send(audio);
     } catch (err) {
       if (clientClosed || res.destroyed || res.writableEnded) return;
       const name = (err as Error).name;
-      if (name === 'TtsBusyError') {
+      // Hosted provider rate limit: transient, same contract as a full queue.
+      const upstreamBusy = err instanceof FishAudioError && err.status === 429;
+      if (name === 'TtsBusyError' || upstreamBusy) {
         // Queue full: a short Retry-After tells the client this is transient
         // (it retries once, then skips the chunk rather than switch voices).
         res.set('Retry-After', '1');
@@ -86,6 +92,11 @@ router.post(
       }
       if (name === 'TtsTimeoutError' || name === 'TtsQueueTimeoutError') {
         res.status(503).json({ success: false, code: 'TTS_TIMEOUT', message: 'Voice timed out' });
+        return;
+      }
+      if (isFishConfigFailure(err)) {
+        // Bad key / no credit / unknown voice: not transient, so no Retry-After.
+        res.status(503).json({ success: false, code: 'TTS_UNAVAILABLE', message: err.message });
         return;
       }
       if (err instanceof AppError && err.statusCode === 503) {

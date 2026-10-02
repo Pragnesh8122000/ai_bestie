@@ -107,7 +107,13 @@ describe('sendMessage', () => {
 
     await useChatStore.getState().sendMessage('Hello Sam', { voiceMode: true });
 
-    expect(api.streamMessage).toHaveBeenCalledWith('a', 'Hello Sam', expect.anything(), true);
+    expect(api.streamMessage).toHaveBeenCalledWith(
+      'a',
+      'Hello Sam',
+      expect.anything(),
+      true,
+      undefined,
+    );
   });
 
   it('omits voiceMode for a normal text-chat send', async () => {
@@ -120,7 +126,13 @@ describe('sendMessage', () => {
 
     await useChatStore.getState().sendMessage('Hello Sam');
 
-    expect(api.streamMessage).toHaveBeenCalledWith('a', 'Hello Sam', expect.anything(), undefined);
+    expect(api.streamMessage).toHaveBeenCalledWith(
+      'a',
+      'Hello Sam',
+      expect.anything(),
+      undefined,
+      undefined,
+    );
   });
 
   it('auto-titles the conversation from the first user message', async () => {

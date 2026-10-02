@@ -23,6 +23,32 @@ const modelList = (value: string | undefined, defaults: string): string[] =>
     .map((model) => model.trim())
     .filter(Boolean);
 
+const ttsProvider = (value: string | undefined): 'kokoro' | 'fishaudio' =>
+  value?.trim().toLowerCase() === 'fishaudio' ? 'fishaudio' : 'kokoro';
+
+// Containers the browser can decode. (Fish's raw 'pcm' has no header, so the
+// client couldn't play it; it is deliberately not offered.)
+export const FISH_FORMATS = ['mp3', 'wav', 'opus'] as const;
+export type FishFormat = (typeof FISH_FORMATS)[number];
+const fishFormat = (value: string | undefined): FishFormat => {
+  const v = value?.trim().toLowerCase() ?? '';
+  return (FISH_FORMATS as readonly string[]).includes(v) ? (v as FishFormat) : 'mp3';
+};
+
+// Fish accepts prosody.speed 0.5-2.0; out-of-range values are clamped.
+const fishSpeed = (value: string | undefined): number | undefined => {
+  const n = Number(value);
+  return value?.trim() && Number.isFinite(n) ? Math.min(2, Math.max(0.5, n)) : undefined;
+};
+
+const FISH_LATENCIES = ['low', 'balanced', 'normal'] as const;
+const fishLatency = (value: string | undefined): (typeof FISH_LATENCIES)[number] | undefined => {
+  const v = value?.trim().toLowerCase() ?? '';
+  return (FISH_LATENCIES as readonly string[]).includes(v)
+    ? (v as (typeof FISH_LATENCIES)[number])
+    : undefined;
+};
+
 /**
  * Fail fast in production if required environment variables are missing or
  * still set to their insecure dev defaults. A missing JWT_SECRET here would
@@ -69,11 +95,22 @@ export const config = {
     // These stable identifiers are current as of 2026-09. Keep the order
     // configurable because free-tier capacity differs by account and region.
     geminiApiKey: process.env.GEMINI_API_KEY || '',
+    // Text-chat models.
     geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
     geminiFallbackModels: modelList(
       process.env.GEMINI_FALLBACK_MODELS,
       'gemini-3.7-flash,gemini-3.5-flash-lite',
     ),
+    // Voice turns use their own Gemini list: on the free tier Flash-Lite
+    // usually answers in <1s where Flash often queues for 10s+ (measured
+    // 2026-10). Text chat keeps the models above.
+    geminiVoiceModels: modelList(
+      process.env.GEMINI_VOICE_MODELS,
+      'gemini-3.5-flash-lite,gemini-flash-lite-latest',
+    ),
+    // Voice turns hedge: if no token has arrived this long after starting a
+    // model, the next one starts in parallel and the first to answer wins.
+    voiceHedgeDelayMs: Math.max(250, Number(process.env.LLM_VOICE_HEDGE_MS) || 2000),
 
     // Secondary: OpenRouter (OpenAI-compatible) — used when Gemini is unavailable
     // (no key) or all its models are rate-limited. OpenRouter has no
@@ -120,6 +157,28 @@ export const config = {
   // to A/B against the old model without a code change.
   tts: {
     enabled: process.env.TTS_ENABLED !== 'false',
+    // Which engine serves /api/tts: 'kokoro' (default, in-process, free) or
+    // 'fishaudio' (hosted API, needs FISH_API_KEY; Kokoro is never loaded).
+    provider: ttsProvider(process.env.TTS_PROVIDER),
+    fish: {
+      // A pasted "Bearer <key>" (as in Fish's curl examples) still works.
+      apiKey: (process.env.FISH_API_KEY ?? '').trim().replace(/^Bearer\s+/i, ''),
+      model: process.env.FISH_TTS_MODEL?.trim() || 's2.1-pro-free',
+      // The voice: a Fish Audio voice-model id (the 32-hex id in a voice's
+      // fish.audio/m/<id> URL). FISH_REFERENCE_ID is the older name.
+      voiceId:
+        process.env.FISH_VOICE_ID?.trim() ||
+        process.env.FISH_REFERENCE_ID?.trim() ||
+        '711cf3ed00ab441a8f54a45058047b7a',
+      // Optional; unset = Fish's defaults (speed 1, latency 'normal').
+      speed: fishSpeed(process.env.FISH_TTS_SPEED),
+      latency: fishLatency(process.env.FISH_TTS_LATENCY),
+      format: fishFormat(process.env.FISH_TTS_FORMAT),
+      baseUrl: (process.env.FISH_API_BASE_URL?.trim() || 'https://api.fish.audio').replace(
+        /\/+$/,
+        '',
+      ),
+    },
     // 'v1_0' (default, 53 speakers) or 'v0_19' (legacy, 11 speakers). The
     // speaker-id space differs between them, so ttsService validates the sid
     // against the version actually in use.
@@ -147,8 +206,13 @@ export const config = {
     numThreads: process.env.TTS_NUM_THREADS?.trim() || 'auto',
     // Inferences that may run at once. One model instance on a CPU host:
     // parallel requests only split the same cores, so keep 1 unless the host
-    // has cores to spare (then raise it rather than numThreads).
-    concurrency: Math.max(1, Number(process.env.TTS_CONCURRENCY) || 1),
+    // has cores to spare (then raise it rather than numThreads). A hosted
+    // provider isn't CPU-bound here, so it defaults to 4.
+    concurrency: Math.max(
+      1,
+      Number(process.env.TTS_CONCURRENCY) ||
+        (ttsProvider(process.env.TTS_PROVIDER) === 'fishaudio' ? 4 : 1),
+    ),
     // Requests allowed to wait for a slot before new ones get 503 + Retry-After.
     maxQueue: Math.max(1, Number(process.env.TTS_MAX_QUEUE) || 8),
     queueTimeoutMs: Math.max(1000, Number(process.env.TTS_QUEUE_TIMEOUT_MS) || 10_000),

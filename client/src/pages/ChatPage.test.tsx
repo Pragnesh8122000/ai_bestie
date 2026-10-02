@@ -449,7 +449,7 @@ describe('ChatPage drawer', () => {
 
     expect(stopSpeaking).toHaveBeenCalled();
     await waitFor(() =>
-      expect(api.streamMessage).toHaveBeenCalledWith('a', 'stop', expect.anything(), true),
+      expect(api.streamMessage).toHaveBeenCalledWith('a', 'stop', expect.anything(), true, undefined),
     );
   });
 
@@ -543,6 +543,7 @@ describe('ChatPage drawer', () => {
         'how do I fix this',
         expect.anything(),
         true,
+        undefined,
       ),
     );
   });

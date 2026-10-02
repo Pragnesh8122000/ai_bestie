@@ -1,9 +1,11 @@
 import { create } from 'zustand';
 import { conversationApi, Conversation, Message } from '../api/conversation';
 import { speakChunk, beginSpeech, stopSpeaking, setTtsStateListener } from '../utils/speech';
+import { isSpeechActive } from '../utils/tts';
 import { deriveTitle, toPreview, DEFAULT_TITLE } from '../utils/conversation';
 import { SpeechChunker } from '../utils/speechChunker';
 import { createVoiceTurnLatencyTrace, type VoiceTurnLatencyTrace } from '../utils/voiceLatency';
+import { finishActiveVoiceTrace, setActiveVoiceTrace } from '../utils/voiceTrace';
 import type { VoiceTurnTiming } from '../utils/voiceCapture';
 import { usePersonaStore } from './personaStore';
 
@@ -436,6 +438,8 @@ export const useChatStore = create<ChatState>((set, getState) => ({
     currentVoiceTrace?.cancel();
     const voiceTrace = opts?.voiceTiming ? createVoiceTurnLatencyTrace(opts.voiceTiming) : null;
     currentVoiceTrace = voiceTrace;
+    const stageTrace = opts?.voiceTiming?.trace ?? null;
+    stageTrace?.mark('chat.send');
     beginSpeech(
       voiceTrace
         ? () => {
@@ -444,6 +448,8 @@ export const useChatStore = create<ChatState>((set, getState) => ({
           }
         : undefined,
     );
+    // After beginSpeech: it closes the previous reply's trace as 'aborted'.
+    setActiveVoiceTrace(stageTrace);
 
     const resetWatchdog = () => {
       clearWatchdog();
@@ -467,7 +473,9 @@ export const useChatStore = create<ChatState>((set, getState) => ({
         content,
         controller.signal,
         opts?.voiceMode,
+        stageTrace?.id,
       );
+      stageTrace?.mark('chat.headers');
 
       if (!response.ok) {
         let message = `Message request failed (${response.status})`;
@@ -508,6 +516,7 @@ export const useChatStore = create<ChatState>((set, getState) => ({
           if (!line.startsWith('data: ')) continue;
           const data = line.slice(6).trim();
           if (!data || data.startsWith(':')) continue;
+          stageTrace?.mark('chat.first_event');
 
           try {
             const event = JSON.parse(data);
@@ -523,6 +532,7 @@ export const useChatStore = create<ChatState>((set, getState) => ({
 
               case 'token':
                 voiceTrace?.markFirstLlmToken();
+                stageTrace?.mark('chat.first_token');
                 assistantContent += event.content;
                 set({ streamingContent: assistantContent });
                 if (getState().ttsEnabled) {
@@ -535,6 +545,7 @@ export const useChatStore = create<ChatState>((set, getState) => ({
                 break;
 
               case 'done': {
+                stageTrace?.mark('chat.done');
                 // Flush any remaining buffered text, including a trailing
                 // fragment with no sentence end.
                 if (getState().ttsEnabled) {
@@ -582,10 +593,13 @@ export const useChatStore = create<ChatState>((set, getState) => ({
                 if (!st.ttsEnabled || st.avatarState === 'thinking') {
                   set({ avatarState: 'idle' });
                 }
+                // Nothing left to say (or no audio ever started): the turn is over.
+                if (stageTrace && !isSpeechActive()) finishActiveVoiceTrace('ok');
                 break;
               }
 
               case 'error':
+                if (stageTrace) finishActiveVoiceTrace('error');
                 voiceTrace?.cancel();
                 if (currentVoiceTrace === voiceTrace) currentVoiceTrace = null;
                 set({
@@ -606,6 +620,7 @@ export const useChatStore = create<ChatState>((set, getState) => ({
       if (myStreamId !== streamId) return;
       voiceTrace?.cancel();
       if (currentVoiceTrace === voiceTrace) currentVoiceTrace = null;
+      if (stageTrace) finishActiveVoiceTrace(error?.name === 'AbortError' ? 'aborted' : 'error');
       const wasAborted = error?.name === 'AbortError';
       const requestRejected = error?.requestRejected === true;
       if (requestRejected) {
@@ -677,6 +692,8 @@ setTtsStateListener((speaking) => {
   if (speaking) {
     useChatStore.setState({ avatarState: 'speaking' });
   } else if (!state.isStreaming) {
+    // Audio drained after the reply finished streaming: the voice turn is over.
+    finishActiveVoiceTrace('ok');
     useChatStore.setState({ avatarState: 'idle' });
   }
 });

@@ -4,6 +4,7 @@ import { useChatStore } from '../stores/chatStore';
 import { usePersonaStore } from '../stores/personaStore';
 import { stabilizePartialMarkdown } from '../utils/markdown';
 import { getArchetypeDisplayName } from '../utils/persona';
+import { clock } from '../utils/time';
 import MessageContent from './MessageContent';
 import VoiceOrb from './VoiceOrb';
 
@@ -19,15 +20,6 @@ const SUGGESTED_PROMPTS = [
   "I'm feeling stuck...",
   "Tell me something fun",
 ];
-
-function clock(iso?: string): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const h = d.getHours().toString().padStart(2, '0');
-  const m = d.getMinutes().toString().padStart(2, '0');
-  return `${h}:${m}`;
-}
 
 export default function ChatWindow() {
   const { activeConversation, avatarState, isStreaming, streamingContent, sendMessage, isLoadingConversation } =
