@@ -220,6 +220,31 @@ router.post(
   }),
 );
 
+// POST /api/conversations/:id/greeting/stream — SSE: the persona opens an
+// empty conversation itself (409 once it has any message). Same generation
+// limiter as messages, since it is one LLM call.
+router.post(
+  '/:id/greeting/stream',
+  chatRateLimiter,
+  catchAsync(async (req, res) => {
+    const idResult = objectIdSchema.safeParse(req.params.id);
+    if (!idResult.success) {
+      throw new AppError('Conversation not found', 404);
+    }
+
+    const { voiceMode } = z.object({ voiceMode: z.boolean().optional() }).parse(req.body ?? {});
+
+    await handleChatStream(
+      req.userId!,
+      String(req.params.id),
+      null,
+      res,
+      voiceMode ?? false,
+      voiceTurnId(req.get('X-Voice-Turn')),
+    );
+  }),
+);
+
 // PATCH /api/conversations/:id — rename a conversation
 router.patch(
   '/:id',

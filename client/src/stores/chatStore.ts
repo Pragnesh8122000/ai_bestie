@@ -40,6 +40,8 @@ interface ChatState {
     content: string,
     opts?: { voiceMode?: boolean; voiceTiming?: VoiceTurnTiming },
   ) => Promise<void>;
+  /** The persona opens an empty active conversation itself (once). */
+  greet: (opts?: { voiceMode?: boolean }) => Promise<void>;
   abortStream: () => void;
   clearError: () => void;
   toggleTts: () => void;
@@ -56,6 +58,8 @@ let streamId = 0;
 // overwrite a faster GET for B when the user switches rapidly.
 let loadId = 0;
 let currentVoiceTrace: VoiceTurnLatencyTrace | null = null;
+// Conversations whose greeting was already requested this page load.
+const greetingRequested = new Set<string>();
 
 const WATCHDOG_MS = 60_000; // abort if no chunk arrives for 60s
 
@@ -75,6 +79,316 @@ function sortByRecency(conversations: Conversation[]): Conversation[] {
   return [...conversations].sort(
     (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime(),
   );
+}
+
+/**
+ * Stream one assistant reply into the active conversation. `content: null`
+ * is the persona's greeting: it opens an empty conversation itself, with no
+ * user message, and fails silently (the user can simply speak first).
+ */
+async function streamReply(
+  content: string | null,
+  opts?: { voiceMode?: boolean; voiceTiming?: VoiceTurnTiming },
+): Promise<void> {
+  const set = useChatStore.setState;
+  const getState = useChatStore.getState;
+  const { activeConversation, isStreaming } = getState();
+  const isGreeting = content === null;
+  // A greeting is spoken only if TTS was already on when it started: voice
+  // mode opened mid-greeting replays it whole instead of speaking a tail.
+  const greetingSpoken = isGreeting && getState().ttsEnabled;
+  const shouldSpeak = () => (isGreeting ? greetingSpoken : getState().ttsEnabled);
+  // Single-flight at the state boundary, not just the disabled button. Two
+  // same-tick UI events must never emit duplicate generation requests.
+  if (!activeConversation || isStreaming || (!isGreeting && !content.trim())) return;
+
+  // Pin the conversation this stream belongs to — the user may switch away
+  // mid-reply, and none of the callbacks below may touch the new one.
+  const convId = activeConversation.id;
+  const wasEmpty = (activeConversation.messages?.length ?? 0) === 0;
+  const originalTitle = activeConversation.title;
+
+  const myStreamId = ++streamId;
+  const controller = new AbortController();
+  currentController = controller;
+
+  // Add user message optimistically (a greeting has none: the persona speaks first)
+  const userMessage: Message | null = isGreeting
+    ? null
+    : {
+        _id: `client_${myStreamId}_${Date.now()}`,
+        role: 'user',
+        content,
+        timestamp: new Date().toISOString(),
+      };
+
+  set((state) => ({
+    activeConversation:
+      state.activeConversation && userMessage
+        ? {
+            ...state.activeConversation,
+            messages: [...state.activeConversation.messages, userMessage],
+          }
+        : state.activeConversation,
+    avatarState: 'thinking',
+    isStreaming: true,
+    streamingContent: '',
+    error: null,
+  }));
+
+  // First message of a conversation names it — mirror the server's title
+  // derivation locally so the sidebar row updates without a refetch.
+  if (wasEmpty && !isGreeting) {
+    const conversation = getState().conversations.find((c) => c.id === convId);
+    if (conversation && !conversation.titleIsCustom) {
+      const title = deriveTitle(content);
+      set((state) => ({
+        conversations: state.conversations.map((c) => (c.id === convId ? { ...c, title } : c)),
+        activeConversation:
+          state.activeConversation?.id === convId
+            ? { ...state.activeConversation, title }
+            : state.activeConversation,
+      }));
+    }
+  }
+
+  // Reset TTS for the new reply. The chunker turns this stream's raw
+  // (still-Markdown) tokens into speakable chunks, sized so each can be
+  // synthesized while the previous one plays.
+  const chunker = new SpeechChunker();
+  currentVoiceTrace?.cancel();
+  const voiceTrace = opts?.voiceTiming ? createVoiceTurnLatencyTrace(opts.voiceTiming) : null;
+  currentVoiceTrace = voiceTrace;
+  const stageTrace = opts?.voiceTiming?.trace ?? null;
+  stageTrace?.mark('chat.send');
+  beginSpeech(
+    voiceTrace
+      ? () => {
+          voiceTrace.markFirstTtsAudio();
+          if (currentVoiceTrace === voiceTrace) currentVoiceTrace = null;
+        }
+      : undefined,
+  );
+  // After beginSpeech: it closes the previous reply's trace as 'aborted'.
+  setActiveVoiceTrace(stageTrace);
+
+  const resetWatchdog = () => {
+    clearWatchdog();
+    watchdog = setTimeout(() => {
+      // Connection stalled — abort and surface a friendly error.
+      if (myStreamId !== streamId) return;
+      controller.abort();
+      set({
+        error: 'Connection stalled. Please try again.',
+        avatarState: 'idle',
+        isStreaming: false,
+        streamingContent: '',
+      });
+    }, WATCHDOG_MS);
+  };
+  resetWatchdog();
+
+  try {
+    const response = isGreeting
+      ? await conversationApi.streamGreeting(convId, controller.signal, opts?.voiceMode)
+      : await conversationApi.streamMessage(
+          convId,
+          content,
+          controller.signal,
+          opts?.voiceMode,
+          stageTrace?.id,
+        );
+    stageTrace?.mark('chat.headers');
+
+    if (!response.ok) {
+      let message = `Message request failed (${response.status})`;
+      try {
+        const body = await response.json();
+        if (typeof body?.message === 'string') message = body.message;
+      } catch {
+        // Non-JSON proxy errors still retain the status-aware fallback.
+      }
+      const rejected = new Error(message) as Error & { requestRejected: boolean };
+      rejected.requestRejected = true;
+      throw rejected;
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('No readable stream');
+
+    const decoder = new TextDecoder();
+    let assistantContent = '';
+    let buffer = '';
+
+    while (true) {
+      if (myStreamId !== streamId) break; // a newer stream superseded this one
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (myStreamId !== streamId) break;
+
+      resetWatchdog();
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // Parse SSE lines
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+      for (const line of lines) {
+        if (myStreamId !== streamId) return;
+        if (!line.startsWith('data: ')) continue;
+        const data = line.slice(6).trim();
+        if (!data || data.startsWith(':')) continue;
+        stageTrace?.mark('chat.first_event');
+
+        try {
+          const event = JSON.parse(data);
+
+          switch (event.type) {
+            case 'state':
+              // When TTS is on, the orb's speaking state is driven by actual
+              // audio start/stop (see setTtsStateListener below), not the
+              // server's advisory state event.
+              if (event.state === 'speaking' && shouldSpeak()) break;
+              set({ avatarState: event.state });
+              break;
+
+            case 'token':
+              voiceTrace?.markFirstLlmToken();
+              stageTrace?.mark('chat.first_token');
+              assistantContent += event.content;
+              set({ streamingContent: assistantContent });
+              if (shouldSpeak()) {
+                // The chunker keeps constructs like fenced blocks whole,
+                // strips the Markdown so the voice speaks words rather than
+                // asterisks, and sizes each chunk so it is synthesized
+                // before the previous one finishes playing.
+                for (const speech of chunker.push(event.content)) speakChunk(speech);
+              }
+              break;
+
+            case 'done': {
+              stageTrace?.mark('chat.done');
+              // Flush any remaining buffered text, including a trailing
+              // fragment with no sentence end.
+              if (shouldSpeak()) {
+                for (const speech of chunker.flush()) speakChunk(speech);
+              }
+              const assistantMessage: Message = {
+                _id: event.messageId,
+                role: 'assistant',
+                content: assistantContent,
+                timestamp: new Date().toISOString(),
+              };
+              const now = new Date().toISOString();
+
+              set((state) => ({
+                // Only append if the user is still looking at this conversation.
+                activeConversation:
+                  state.activeConversation?.id === convId
+                    ? {
+                        ...state.activeConversation,
+                        messages: [...state.activeConversation.messages, assistantMessage],
+                        lastMessageAt: now,
+                      }
+                    : state.activeConversation,
+                // The list entry updates regardless — the reply landed in the
+                // database whether or not it's on screen.
+                conversations: sortByRecency(
+                  state.conversations.map((c) =>
+                    c.id === convId
+                      ? {
+                          ...c,
+                          lastMessageAt: now,
+                          lastMessagePreview: toPreview(assistantContent),
+                          messageCount: (c.messageCount ?? 0) + (isGreeting ? 1 : 2),
+                        }
+                      : c,
+                  ),
+                ),
+                isStreaming: false,
+                streamingContent: '',
+              }));
+
+              // If TTS is off (or no audio ever started), go idle now. When TTS
+              // is playing, the audio state listener resets to idle on drain.
+              const st = getState();
+              if (!shouldSpeak() || st.avatarState === 'thinking') {
+                set({ avatarState: 'idle' });
+              }
+              // Nothing left to say (or no audio ever started): the turn is over.
+              if (stageTrace && !isSpeechActive()) finishActiveVoiceTrace('ok');
+              break;
+            }
+
+            case 'error':
+              if (stageTrace) finishActiveVoiceTrace('error');
+              voiceTrace?.cancel();
+              if (currentVoiceTrace === voiceTrace) currentVoiceTrace = null;
+              set({
+                // A failed greeting stays quiet: the user can just talk first.
+                error: isGreeting ? null : event.message || 'Stream error',
+                avatarState: 'idle',
+                isStreaming: false,
+                streamingContent: '',
+              });
+              break;
+          }
+        } catch {
+          // Skip unparseable lines
+        }
+      }
+    }
+  } catch (error: any) {
+    // Stale stream — a newer stream superseded this one; don't touch state.
+    if (myStreamId !== streamId) return;
+    voiceTrace?.cancel();
+    if (currentVoiceTrace === voiceTrace) currentVoiceTrace = null;
+    if (stageTrace) finishActiveVoiceTrace(error?.name === 'AbortError' ? 'aborted' : 'error');
+    const wasAborted = error?.name === 'AbortError';
+    const requestRejected = error?.requestRejected === true;
+    if (requestRejected && userMessage) {
+      // The server rejected the request before chatService persisted it
+      // (notably a 429). Remove only this optimistic turn and restore an
+      // auto-title derived from a message that never landed.
+      set((state) => ({
+        activeConversation:
+          state.activeConversation?.id === convId
+            ? {
+                ...state.activeConversation,
+                title: wasEmpty ? originalTitle : state.activeConversation.title,
+                messages: state.activeConversation.messages.filter(
+                  (message) => message._id !== userMessage._id,
+                ),
+              }
+            : state.activeConversation,
+        conversations: state.conversations.map((conversation) =>
+          conversation.id === convId && wasEmpty
+            ? { ...conversation, title: originalTitle }
+            : conversation,
+        ),
+      }));
+    }
+    if (wasAborted) {
+      // Aborted by us (stalled / navigated / switched / new message). The
+      // watchdog path already set a specific error; otherwise reset quietly.
+      if (!getState().error) {
+        set({ avatarState: 'idle', isStreaming: false, streamingContent: '' });
+      }
+    } else {
+      set({
+        error: isGreeting ? null : errorMessage(error, 'Failed to send message'),
+        avatarState: 'idle',
+        isStreaming: false,
+        streamingContent: '',
+      });
+    }
+  } finally {
+    if (myStreamId === streamId) {
+      clearWatchdog();
+      if (currentController === controller) currentController = null;
+    }
+  }
 }
 
 export const useChatStore = create<ChatState>((set, getState) => ({
@@ -375,296 +689,19 @@ export const useChatStore = create<ChatState>((set, getState) => ({
     });
   },
 
-  sendMessage: async (
-    content: string,
-    opts?: { voiceMode?: boolean; voiceTiming?: VoiceTurnTiming },
-  ) => {
+  sendMessage: (content: string, opts?: { voiceMode?: boolean; voiceTiming?: VoiceTurnTiming }) =>
+    streamReply(content, opts),
+
+  greet: (opts?: { voiceMode?: boolean }) => {
     const { activeConversation, isStreaming } = getState();
-    // Single-flight at the state boundary, not just the disabled button. Two
-    // same-tick UI events must never emit duplicate generation requests.
-    if (!activeConversation || !content.trim() || isStreaming) return;
-
-    // Pin the conversation this stream belongs to — the user may switch away
-    // mid-reply, and none of the callbacks below may touch the new one.
-    const convId = activeConversation.id;
-    const wasEmpty = (activeConversation.messages?.length ?? 0) === 0;
-    const originalTitle = activeConversation.title;
-
-    const myStreamId = ++streamId;
-    const controller = new AbortController();
-    currentController = controller;
-
-    // Add user message optimistically
-    const userMessage: Message = {
-      _id: `client_${myStreamId}_${Date.now()}`,
-      role: 'user',
-      content,
-      timestamp: new Date().toISOString(),
-    };
-
-    set((state) => ({
-      activeConversation: state.activeConversation
-        ? {
-            ...state.activeConversation,
-            messages: [...state.activeConversation.messages, userMessage],
-          }
-        : null,
-      avatarState: 'thinking',
-      isStreaming: true,
-      streamingContent: '',
-      error: null,
-    }));
-
-    // First message of a conversation names it — mirror the server's title
-    // derivation locally so the sidebar row updates without a refetch.
-    if (wasEmpty) {
-      const conversation = getState().conversations.find((c) => c.id === convId);
-      if (conversation && !conversation.titleIsCustom) {
-        const title = deriveTitle(content);
-        set((state) => ({
-          conversations: state.conversations.map((c) => (c.id === convId ? { ...c, title } : c)),
-          activeConversation:
-            state.activeConversation?.id === convId
-              ? { ...state.activeConversation, title }
-              : state.activeConversation,
-        }));
-      }
+    if (!activeConversation || isStreaming || activeConversation.messages.length > 0) {
+      return Promise.resolve();
     }
-
-    // Reset TTS for the new reply. The chunker turns this stream's raw
-    // (still-Markdown) tokens into speakable chunks, sized so each can be
-    // synthesized while the previous one plays.
-    const chunker = new SpeechChunker();
-    currentVoiceTrace?.cancel();
-    const voiceTrace = opts?.voiceTiming ? createVoiceTurnLatencyTrace(opts.voiceTiming) : null;
-    currentVoiceTrace = voiceTrace;
-    const stageTrace = opts?.voiceTiming?.trace ?? null;
-    stageTrace?.mark('chat.send');
-    beginSpeech(
-      voiceTrace
-        ? () => {
-            voiceTrace.markFirstTtsAudio();
-            if (currentVoiceTrace === voiceTrace) currentVoiceTrace = null;
-          }
-        : undefined,
-    );
-    // After beginSpeech: it closes the previous reply's trace as 'aborted'.
-    setActiveVoiceTrace(stageTrace);
-
-    const resetWatchdog = () => {
-      clearWatchdog();
-      watchdog = setTimeout(() => {
-        // Connection stalled — abort and surface a friendly error.
-        if (myStreamId !== streamId) return;
-        controller.abort();
-        set({
-          error: 'Connection stalled. Please try again.',
-          avatarState: 'idle',
-          isStreaming: false,
-          streamingContent: '',
-        });
-      }, WATCHDOG_MS);
-    };
-    resetWatchdog();
-
-    try {
-      const response = await conversationApi.streamMessage(
-        convId,
-        content,
-        controller.signal,
-        opts?.voiceMode,
-        stageTrace?.id,
-      );
-      stageTrace?.mark('chat.headers');
-
-      if (!response.ok) {
-        let message = `Message request failed (${response.status})`;
-        try {
-          const body = await response.json();
-          if (typeof body?.message === 'string') message = body.message;
-        } catch {
-          // Non-JSON proxy errors still retain the status-aware fallback.
-        }
-        const rejected = new Error(message) as Error & { requestRejected: boolean };
-        rejected.requestRejected = true;
-        throw rejected;
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('No readable stream');
-
-      const decoder = new TextDecoder();
-      let assistantContent = '';
-      let buffer = '';
-
-      while (true) {
-        if (myStreamId !== streamId) break; // a newer stream superseded this one
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (myStreamId !== streamId) break;
-
-        resetWatchdog();
-
-        buffer += decoder.decode(value, { stream: true });
-
-        // Parse SSE lines
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep incomplete line in buffer
-
-        for (const line of lines) {
-          if (myStreamId !== streamId) return;
-          if (!line.startsWith('data: ')) continue;
-          const data = line.slice(6).trim();
-          if (!data || data.startsWith(':')) continue;
-          stageTrace?.mark('chat.first_event');
-
-          try {
-            const event = JSON.parse(data);
-
-            switch (event.type) {
-              case 'state':
-                // When TTS is on, the orb's speaking state is driven by actual
-                // audio start/stop (see setTtsStateListener below), not the
-                // server's advisory state event.
-                if (event.state === 'speaking' && getState().ttsEnabled) break;
-                set({ avatarState: event.state });
-                break;
-
-              case 'token':
-                voiceTrace?.markFirstLlmToken();
-                stageTrace?.mark('chat.first_token');
-                assistantContent += event.content;
-                set({ streamingContent: assistantContent });
-                if (getState().ttsEnabled) {
-                  // The chunker keeps constructs like fenced blocks whole,
-                  // strips the Markdown so the voice speaks words rather than
-                  // asterisks, and sizes each chunk so it is synthesized
-                  // before the previous one finishes playing.
-                  for (const speech of chunker.push(event.content)) speakChunk(speech);
-                }
-                break;
-
-              case 'done': {
-                stageTrace?.mark('chat.done');
-                // Flush any remaining buffered text, including a trailing
-                // fragment with no sentence end.
-                if (getState().ttsEnabled) {
-                  for (const speech of chunker.flush()) speakChunk(speech);
-                }
-                const assistantMessage: Message = {
-                  _id: event.messageId,
-                  role: 'assistant',
-                  content: assistantContent,
-                  timestamp: new Date().toISOString(),
-                };
-                const now = new Date().toISOString();
-
-                set((state) => ({
-                  // Only append if the user is still looking at this conversation.
-                  activeConversation:
-                    state.activeConversation?.id === convId
-                      ? {
-                          ...state.activeConversation,
-                          messages: [...state.activeConversation.messages, assistantMessage],
-                          lastMessageAt: now,
-                        }
-                      : state.activeConversation,
-                  // The list entry updates regardless — the reply landed in the
-                  // database whether or not it's on screen.
-                  conversations: sortByRecency(
-                    state.conversations.map((c) =>
-                      c.id === convId
-                        ? {
-                            ...c,
-                            lastMessageAt: now,
-                            lastMessagePreview: toPreview(assistantContent),
-                            messageCount: (c.messageCount ?? 0) + 2,
-                          }
-                        : c,
-                    ),
-                  ),
-                  isStreaming: false,
-                  streamingContent: '',
-                }));
-
-                // If TTS is off (or no audio ever started), go idle now. When TTS
-                // is playing, the audio state listener resets to idle on drain.
-                const st = getState();
-                if (!st.ttsEnabled || st.avatarState === 'thinking') {
-                  set({ avatarState: 'idle' });
-                }
-                // Nothing left to say (or no audio ever started): the turn is over.
-                if (stageTrace && !isSpeechActive()) finishActiveVoiceTrace('ok');
-                break;
-              }
-
-              case 'error':
-                if (stageTrace) finishActiveVoiceTrace('error');
-                voiceTrace?.cancel();
-                if (currentVoiceTrace === voiceTrace) currentVoiceTrace = null;
-                set({
-                  error: event.message || 'Stream error',
-                  avatarState: 'idle',
-                  isStreaming: false,
-                  streamingContent: '',
-                });
-                break;
-            }
-          } catch {
-            // Skip unparseable lines
-          }
-        }
-      }
-    } catch (error: any) {
-      // Stale stream — a newer stream superseded this one; don't touch state.
-      if (myStreamId !== streamId) return;
-      voiceTrace?.cancel();
-      if (currentVoiceTrace === voiceTrace) currentVoiceTrace = null;
-      if (stageTrace) finishActiveVoiceTrace(error?.name === 'AbortError' ? 'aborted' : 'error');
-      const wasAborted = error?.name === 'AbortError';
-      const requestRejected = error?.requestRejected === true;
-      if (requestRejected) {
-        // The server rejected the request before chatService persisted it
-        // (notably a 429). Remove only this optimistic turn and restore an
-        // auto-title derived from a message that never landed.
-        set((state) => ({
-          activeConversation:
-            state.activeConversation?.id === convId
-              ? {
-                  ...state.activeConversation,
-                  title: wasEmpty ? originalTitle : state.activeConversation.title,
-                  messages: state.activeConversation.messages.filter(
-                    (message) => message._id !== userMessage._id,
-                  ),
-                }
-              : state.activeConversation,
-          conversations: state.conversations.map((conversation) =>
-            conversation.id === convId && wasEmpty
-              ? { ...conversation, title: originalTitle }
-              : conversation,
-          ),
-        }));
-      }
-      if (wasAborted) {
-        // Aborted by us (stalled / navigated / switched / new message). The
-        // watchdog path already set a specific error; otherwise reset quietly.
-        if (!getState().error) {
-          set({ avatarState: 'idle', isStreaming: false, streamingContent: '' });
-        }
-      } else {
-        set({
-          error: errorMessage(error, 'Failed to send message'),
-          avatarState: 'idle',
-          isStreaming: false,
-          streamingContent: '',
-        });
-      }
-    } finally {
-      if (myStreamId === streamId) {
-        clearWatchdog();
-        if (currentController === controller) currentController = null;
-      }
-    }
+    // Once per conversation per page load: a refused or failed greeting must
+    // not retry in a loop, and StrictMode/remounts must not double-greet.
+    if (greetingRequested.has(activeConversation.id)) return Promise.resolve();
+    greetingRequested.add(activeConversation.id);
+    return streamReply(null, opts);
   },
 
   clearError: () => set({ error: null }),
