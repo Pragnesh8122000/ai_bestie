@@ -12,6 +12,7 @@
     "migrate:auth": "tsx src/scripts/migrate-auth-providers.ts",
     "download-tts-model": "tsx src/scripts/download-tts-model.ts",
     "verify-voice": "tsx src/scripts/verify-voice.mts",
+    "voice-report": "tsx src/scripts/voice-report.mts",
     "bench-tts": "node scripts/with-tts-env.cjs tsx src/scripts/bench-tts.mts"
   },
   "dependencies": {

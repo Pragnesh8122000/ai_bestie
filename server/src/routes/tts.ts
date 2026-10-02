@@ -5,6 +5,7 @@ import { catchAsync, AppError } from '../utils/errors';
 import { requireAuth, ttsRateLimiter } from '../middleware/auth';
 import { synthesize, ttsStatus } from '../services/ttsService';
 import { config } from '../config';
+import { voiceTurnId } from '../utils/metricsLog';
 
 const router = Router();
 
@@ -65,6 +66,7 @@ router.post(
       const { wav } = await synthesize(input.text, ac.signal, {
         reqId: randomUUID(),
         userId: req.userId,
+        turnId: voiceTurnId(req.get('X-Voice-Turn')),
         generation: correlationId(req.get('X-TTS-Generation')),
         chunk: correlationId(req.get('X-TTS-Chunk')),
         lang: input.lang,

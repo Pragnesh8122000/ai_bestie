@@ -83,6 +83,8 @@ GOOGLE_CLIENT_ID=1234567890-example.apps.googleusercontent.com
 GEMINI_API_KEY=...            # Google AI Studio — primary chat provider
 GEMINI_MODEL=gemini-3.8-flash
 GEMINI_FALLBACK_MODELS=gemini-3.7-flash,gemini-3.5-flash-lite
+GEMINI_VOICE_MODELS=gemini-3.5-flash-lite,gemini-flash-lite-latest  # voice turns only
+LLM_VOICE_HEDGE_MS=2000       # voice: race the next model if no token by then
 OPENROUTER_API_KEY=...        # OpenRouter — fallback (free models)
 OPENROUTER_MODEL=google/gemma-4-31b-it:free
 
@@ -110,6 +112,13 @@ TTS_SPEED=0.95
 # Always on stdout; set a directory to also write voice-metrics-YYYY-MM-DD.jsonl.
 # Defaults to server/logs outside production, off in production.
 # VOICE_METRICS_DIR=
+#
+# Each voice turn carries one id (X-Voice-Turn header) through the browser's
+# stage timeline (voice.turn.client, posted to /api/metrics/voice) and the
+# server's stt.transcribe / chat.turn / tts.synth lines. Join them with:
+#   npm run voice-report -w server [-- --last 20 | --file <jsonl> | --json]
+# Production has no file by default: set VOICE_METRICS_DIR or save stdout and
+# pass --file.
 
 # No Anthropic, OpenAI chat-generation, Voyage, or Redis keys are used.
 ```

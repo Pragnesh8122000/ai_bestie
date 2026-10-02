@@ -12,6 +12,7 @@ import personaRoutes from './routes/personas';
 import conversationRoutes from './routes/conversations';
 import ttsRoutes from './routes/tts';
 import transcriptionRoutes from './routes/transcriptions';
+import metricsRoutes from './routes/metrics';
 import { apiRateLimiter } from './middleware/auth';
 
 // Initialize Passport strategies
@@ -70,6 +71,7 @@ app.get('/api/health', (_req, res) => {
 // ceiling. Only ttsRateLimiter (mounted inside the router) applies.
 app.use('/api/tts', ttsRoutes);
 app.use('/api/transcriptions', transcriptionRoutes);
+app.use('/api/metrics', metricsRoutes);
 
 // Generic limiter for /api routes. Generation is explicitly skipped and has
 // one authoritative per-user limiter inside the conversation router.

@@ -1,5 +1,6 @@
 import { transcribeVoiceClip } from '../api/transcription';
 import { isSTTSupported, listenOnce, type ListenSession } from './speech';
+import { createVoiceTrace, type VoiceTrace } from './voiceTrace';
 
 // A turn cap, not a single recognition session's length — `listenOnce` now
 // restarts transparently across pauses, so this only bounds one whole turn.
@@ -77,6 +78,8 @@ export interface VoiceTurnTiming {
   speechEndedAt: number;
   transcriptReadyAt: number;
   usedServerFallback: boolean;
+  /** Stage timeline for this turn; handed on to the chat request and TTS. */
+  trace?: VoiceTrace;
 }
 
 interface BraveNavigator extends Navigator {
@@ -101,11 +104,15 @@ function recorderMimeType(): string | undefined {
   return candidates.find((type) => MediaRecorder.isTypeSupported?.(type));
 }
 
-async function startCapture(onLevel?: (level: number) => void): Promise<Capture> {
+async function startCapture(
+  onLevel?: (level: number) => void,
+  trace?: VoiceTrace,
+): Promise<Capture> {
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
     throw new Error('Microphone recording is not supported in this browser.');
   }
 
+  trace?.mark('mic.request');
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
       echoCancellation: true,
@@ -114,6 +121,7 @@ async function startCapture(onLevel?: (level: number) => void): Promise<Capture>
       channelCount: 1,
     },
   });
+  trace?.mark('mic.granted');
   const chunks: BlobPart[] = [];
   const mimeType = recorderMimeType();
   const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
@@ -128,6 +136,7 @@ async function startCapture(onLevel?: (level: number) => void): Promise<Capture>
     if (event.data.size > 0) chunks.push(event.data);
   };
   recorder.start(250);
+  trace?.mark('recorder.started');
 
   try {
     const AudioContextCtor =
@@ -196,6 +205,7 @@ export function startVoiceTurn(
   allowServerFallback = true,
   onTiming?: (timing: VoiceTurnTiming) => void,
 ): VoiceTurnSession {
+  const trace = createVoiceTrace();
   let cancelled = false;
   let recognition: ListenSession | null = null;
   let capture: Capture | null = null;
@@ -232,6 +242,8 @@ export function startVoiceTurn(
     // a real browser before the recording could even be uploaded. Detect the
     // browser first and go directly to the already-configured fallback.
     const brave = await isBraveBrowser();
+    trace.mark('brave_check');
+    trace.meta('brave', brave);
     if (brave && !allowServerFallback) {
       // Silent barge-in probes must never upload paid audio. Keep this session
       // cancellable until the speaking state ends instead of spinning a rapid
@@ -240,28 +252,38 @@ export function startVoiceTurn(
       return { transcript: '', usedServerFallback: false };
     }
 
-    capture = await startCapture(levelSink);
+    capture = await startCapture(levelSink, trace);
     if (cancelled) {
       await capture.stop();
       return { transcript: '', usedServerFallback: false };
     }
 
     let shouldFallback = brave || !isSTTSupported();
+    trace.setPath(shouldFallback ? 'server-fallback' : 'browser');
     if (!shouldFallback) {
-      recognition = listenOnce('en-US', onInterim, maxMs, (at) => {
-        speechEndedAt = at;
-      });
+      recognition = listenOnce(
+        'en-US',
+        onInterim,
+        maxMs,
+        (at) => {
+          speechEndedAt = at;
+          trace.mark('stt.last_result', at);
+        },
+        trace,
+      );
       try {
         const transcript = (await recognition.promise).trim();
         if (cancelled) return { transcript: '', usedServerFallback: false };
         if (transcript) {
           await capture.stop();
           const transcriptReadyAt = performance.now();
+          trace.mark('stt.transcript', transcriptReadyAt);
           onTiming?.({
             captureStartedAt: startedAt,
             speechEndedAt: speechEndedAt ?? transcriptReadyAt,
             transcriptReadyAt,
             usedServerFallback: false,
+            trace,
           });
           return { transcript, usedServerFallback: false };
         }
@@ -275,6 +297,8 @@ export function startVoiceTurn(
           throw error;
         }
         shouldFallback = true;
+        trace.setPath('server-fallback');
+        trace.mark('stt.network_error');
       }
     }
 
@@ -289,17 +313,30 @@ export function startVoiceTurn(
       await wait(Math.min(100, deadline - performance.now()));
     }
     const recording = await capture.stop();
+    trace.mark('capture.stopped');
+    trace.meta('audio_ms', Math.round(recording.durationMs));
+    trace.meta('audio_bytes', recording.blob.size);
     if (cancelled || recording.blob.size === 0) {
       return { transcript: '', usedServerFallback: true };
     }
-    const result = await transcribeVoiceClip(recording.blob, recording.durationMs, upload.signal);
+    trace.mark('stt.upload_start');
+    const result = await transcribeVoiceClip(
+      recording.blob,
+      recording.durationMs,
+      upload.signal,
+      trace.id,
+    );
     const transcriptReadyAt = performance.now();
+    trace.mark('stt.upload_end', transcriptReadyAt);
+    trace.mark('stt.transcript', transcriptReadyAt);
+    trace.mark('stt.last_result', speechEndedAt ?? endOfSpeech.lastSpeechAt() ?? undefined);
     onTiming?.({
       captureStartedAt: startedAt,
       speechEndedAt:
         speechEndedAt ?? endOfSpeech.lastSpeechAt() ?? recording.durationMs + startedAt,
       transcriptReadyAt,
       usedServerFallback: true,
+      trace,
     });
     return { transcript: result.text.trim(), usedServerFallback: true };
   })().finally(() => {

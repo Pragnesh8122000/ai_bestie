@@ -69,11 +69,22 @@ export const config = {
     // These stable identifiers are current as of 2026-09. Keep the order
     // configurable because free-tier capacity differs by account and region.
     geminiApiKey: process.env.GEMINI_API_KEY || '',
+    // Text-chat models.
     geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
     geminiFallbackModels: modelList(
       process.env.GEMINI_FALLBACK_MODELS,
       'gemini-3.7-flash,gemini-3.5-flash-lite',
     ),
+    // Voice turns use their own Gemini list: on the free tier Flash-Lite
+    // usually answers in <1s where Flash often queues for 10s+ (measured
+    // 2026-10). Text chat keeps the models above.
+    geminiVoiceModels: modelList(
+      process.env.GEMINI_VOICE_MODELS,
+      'gemini-3.5-flash-lite,gemini-flash-lite-latest',
+    ),
+    // Voice turns hedge: if no token has arrived this long after starting a
+    // model, the next one starts in parallel and the first to answer wins.
+    voiceHedgeDelayMs: Math.max(250, Number(process.env.LLM_VOICE_HEDGE_MS) || 2000),
 
     // Secondary: OpenRouter (OpenAI-compatible) — used when Gemini is unavailable
     // (no key) or all its models are rate-limited. OpenRouter has no

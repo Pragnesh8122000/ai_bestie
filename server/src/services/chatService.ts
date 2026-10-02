@@ -4,8 +4,9 @@ import { config } from '../config/index';
 import { Conversation, toPreview } from '../models/Conversation';
 import { Persona } from '../models/Persona';
 import { assembleSystemPrompt, ensureDefaultPersona } from './personaService';
-import { LlmProviderError, streamChat } from './llmService';
+import { LlmProviderError, streamChat, type ProviderInfo } from './llmService';
 import { logMetric } from '../utils/metricsLog';
+import { formatIst } from '../utils/time';
 
 const STREAM_TIMEOUT_MS = 30_000; // abort upstream if no completion by 30s
 const HEARTBEAT_MS = 15_000; // SSE keepalive to survive idle proxy/CDN drops
@@ -85,6 +86,7 @@ export async function handleChatStream(
   userMessage: string,
   res: Response,
   voiceMode = false,
+  turnId?: string,
 ): Promise<void> {
   const startedAtMs = Date.now();
   const reqId = randomUUID();
@@ -183,7 +185,7 @@ export async function handleChatStream(
   let firstTokenMs = null as number | null;
   let tokenChunks = 0;
   let replyChars = 0;
-  let provider = null as { provider: string; model: string; failedAttempts: number } | null;
+  let provider = null as ProviderInfo | null;
   let outcome: 'ok' | 'client_closed' | 'timeout' | 'error' = 'ok';
   let errorCode: string | undefined;
   let failureSummary: string | undefined;
@@ -281,10 +283,11 @@ export async function handleChatStream(
     const endMs = Date.now();
     logMetric('chat.turn', {
       reqId,
+      ...(turnId ? { turnId } : {}),
       userId,
       conversationId,
       voiceMode,
-      startedAt: new Date(startedAtMs).toISOString(),
+      startedAt: formatIst(startedAtMs),
       outcome,
       ...(errorCode ? { errorCode } : {}),
       // Time before the LLM call: DB loads, prompt assembly, persisting the user message.
@@ -300,6 +303,8 @@ export async function handleChatStream(
       provider: provider?.provider ?? null,
       model: provider?.model ?? null,
       failedAttempts: provider?.failedAttempts ?? null,
+      // Upstream requests started (voice hedging can race more than one).
+      ...(provider?.attempts !== undefined ? { llmAttempts: provider.attempts } : {}),
       ...(failureSummary ? { failureSummary } : {}),
       maxTokens: voiceMode ? VOICE_MODE_MAX_TOKENS : null,
       inputChars: userMessage.length,

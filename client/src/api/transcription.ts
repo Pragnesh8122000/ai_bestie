@@ -16,6 +16,7 @@ export async function transcribeVoiceClip(
   audio: Blob,
   durationMs: number,
   signal?: AbortSignal,
+  turnId?: string,
 ): Promise<TranscriptionResult> {
   const response = await fetch('/api/transcriptions', {
     method: 'POST',
@@ -23,6 +24,7 @@ export async function transcribeVoiceClip(
     headers: {
       'Content-Type': audio.type || 'audio/webm',
       'X-Audio-Duration-Ms': String(Math.ceil(durationMs)),
+      ...(turnId ? { 'X-Voice-Turn': turnId } : {}),
     },
     body: audio,
     signal,

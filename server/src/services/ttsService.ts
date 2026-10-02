@@ -280,6 +280,7 @@ export function ttsStatus(): TtsStatus {
 export interface TtsLogContext {
   reqId?: string;
   userId?: string;
+  turnId?: string;
   generation?: string;
   chunk?: string;
   lang?: string;

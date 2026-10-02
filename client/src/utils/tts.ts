@@ -32,15 +32,17 @@ import {
   waitForTime,
 } from './audioPlayer';
 import { browserVoiceUtterances, languageUtterances, playUtterance } from './browserVoice';
+import { finishActiveVoiceTrace, getActiveVoiceTrace, type ChunkTrace } from './voiceTrace';
 import { splitChunks } from './speechChunker';
 import { detectSpeechLanguage } from './speechText';
 
 type TtsStateListener = (speaking: boolean) => void;
 type TtsLevelListener = (level: number) => void;
-type QueueItem =
+type QueueItem = (
   | { kind: 'buffer'; buffer: AudioBuffer; blob: Blob }
   | { kind: 'remote'; audio: HTMLAudioElement; url: string; durationMs: number }
-  | { kind: 'local'; utts: SpeechSynthesisUtterance[] };
+  | { kind: 'local'; utts: SpeechSynthesisUtterance[] }
+) & { trace?: ChunkTrace };
 
 // Chunks synthesized ahead of the one playing. Two, not one: the server works
 // through requests one at a time, so a second queued request keeps it busy
@@ -78,7 +80,9 @@ let ttsMode: TtsMode = 'unknown';
 // stream can't leak in after stopSpeaking() / beginSpeech().
 let speechSession = 0;
 let chunkSeq = 0;
-let textQueue: string[] = [];
+let textQueue: Array<{ text: string; queuedAt: number }> = [];
+// Chunks scheduled for the current reply (a gap is only meaningful after the first).
+let playedChunks = 0;
 let pending: Array<Promise<QueueItem | null>> = [];
 const inflight = new Set<AbortController>();
 let pumping = false;
@@ -138,8 +142,11 @@ function discard(item: QueueItem): void {
 
 /** Invalidate the current reply: queued text, requests, and audio. */
 function resetSession(): void {
+  // A reply cut off before it finished playing is closed here (no-op if none).
+  finishActiveVoiceTrace('aborted');
   speechSession++;
   textQueue = [];
+  playedChunks = 0;
   // Abort requests still in flight; the server drops their queued synthesis.
   for (const ac of inflight) ac.abort();
   inflight.clear();
@@ -164,7 +171,9 @@ export function beginSpeech(onFirstAudio?: () => void): void {
 /** Enqueue a chunk of text (e.g. one sentence) for speech. */
 export function speakChunk(text: string, lang = 'en-US'): void {
   if (!text || !text.trim()) return;
-  for (const c of splitChunks(text)) textQueue.push(c);
+  const queuedAt = performance.now();
+  for (const c of splitChunks(text)) textQueue.push({ text: c, queuedAt });
+  getActiveVoiceTrace()?.mark('tts.first_queued', queuedAt);
   if (pumping) {
     fill(lang);
     wakePump?.();
@@ -184,6 +193,11 @@ export function stopSpeaking(): void {
   notifyState(false);
 }
 
+/** True while any chunk of the current reply is queued, synthesizing, or audible. */
+export function isSpeechActive(): boolean {
+  return pumping || speaking || textQueue.length > 0 || pending.length > 0;
+}
+
 /**
  * Start synthesis for queued text, in order, up to PREFETCH_DEPTH ahead.
  * While the engine is still undecided only the first chunk is requested, so
@@ -192,10 +206,10 @@ export function stopSpeaking(): void {
 function fill(lang: string): void {
   while (textQueue.length && pending.length < PREFETCH_DEPTH) {
     if (ttsMode === 'unknown' && pending.length > 0) return;
-    const chunk = textQueue.shift()!;
+    const { text: chunk, queuedAt } = textQueue.shift()!;
     // fetchItem never rejects; the catch keeps an idle prefetch from ever
     // surfacing as an unhandled rejection.
-    pending.push(fetchItem(chunk, lang, speechSession).catch(() => null));
+    pending.push(fetchItem(chunk, lang, speechSession, queuedAt).catch(() => null));
   }
 }
 
@@ -267,6 +281,7 @@ function markSpeaking(): void {
     speaking = true;
     const onFirstAudio = firstAudioListener;
     firstAudioListener = null;
+    getActiveVoiceTrace()?.mark('tts.first_audio');
     onFirstAudio?.();
     notifyState(true);
   }
@@ -280,10 +295,30 @@ function markSpeaking(): void {
 async function playItem(queued: QueueItem, mySession: number): Promise<void> {
   let item: Exclude<QueueItem, { kind: 'buffer' }>;
   if (queued.kind === 'buffer') {
+    const resumeStartedAt = performance.now();
     if (await ensureRunning()) {
       if (mySession !== speechSession) return;
+      const ctx = getAudioContext();
+      const prevEnd = scheduledEnd();
+      const gapMs =
+        ctx && playedChunks > 0 && ctx.currentTime > prevEnd
+          ? (ctx.currentTime - prevEnd) * 1000
+          : 0;
       markSpeaking();
       const end = scheduleBuffer(queued.buffer);
+      queued.trace?.mark('scheduled');
+      queued.trace?.set({ gapMs: Math.round(gapMs) });
+      if (playedChunks++ === 0) {
+        // Audio-output stage: time to wake the context, and the hardware path's
+        // own delay between "scheduled" and sound leaving the speakers.
+        const trace = getActiveVoiceTrace();
+        trace?.meta('audio_resume_ms', Math.round(performance.now() - resumeStartedAt));
+        if (ctx) {
+          trace?.meta('ctx_state', ctx.state);
+          const out = ctx.outputLatency || ctx.baseLatency || 0;
+          trace?.meta('output_latency_ms', Math.round(out * 1000));
+        }
+      }
       const result = await waitForTime(end - SCHEDULE_LEAD_S);
       if (result === 'stalled' && mySession === speechSession) stopAll();
       return;
@@ -301,6 +336,8 @@ async function playItem(queued: QueueItem, mySession: number): Promise<void> {
     return;
   }
   markSpeaking();
+  queued.trace?.mark('scheduled');
+  playedChunks++;
   if (item.kind === 'remote') await playElement(item, mySession);
   else for (const utt of item.utts) if (mySession === speechSession) await playUtterance(utt);
 }
@@ -365,19 +402,26 @@ function wavDurationMs(data: ArrayBuffer | null, size: number): number {
 }
 
 /** Turn a successful /api/tts response into something playable, or null if empty. */
-async function toItem(res: Response): Promise<QueueItem | null> {
+async function toItem(res: Response, trace?: ChunkTrace): Promise<QueueItem | null> {
   if (isWebAudioSupported() && typeof res.arrayBuffer === 'function' && getAudioContext()) {
     const data = await res.arrayBuffer();
+    trace?.mark('body');
+    trace?.set({ bytes: data.byteLength });
     if (!data.byteLength) return null;
     const blob = new Blob([data], { type: 'audio/wav' });
     // decodeAudioData detaches its input, so it gets a copy.
     const buffer = await decodeAudio(data.slice(0));
+    trace?.mark('decoded');
+    if (buffer) trace?.set({ audioMs: Math.round(buffer.duration * 1000) });
     return buffer
       ? { kind: 'buffer', buffer, blob }
       : remoteItem(blob, wavDurationMs(data, data.byteLength));
   }
   const blob = await res.blob();
+  trace?.mark('body');
+  trace?.set({ bytes: blob?.size ?? 0 });
   if (!blob || blob.size === 0) return null;
+  trace?.mark('decoded');
   return remoteItem(blob, wavDurationMs(null, blob.size));
 }
 
@@ -409,6 +453,19 @@ async function fetchItem(
   chunk: string,
   lang: string,
   mySession: number,
+  queuedAt?: number,
+): Promise<QueueItem | null> {
+  const trace = getActiveVoiceTrace()?.chunk(chunk.length, queuedAt);
+  const item = await fetchItemUntraced(chunk, lang, mySession, trace);
+  if (item && trace) item.trace = trace;
+  return item;
+}
+
+async function fetchItemUntraced(
+  chunk: string,
+  lang: string,
+  mySession: number,
+  trace?: ChunkTrace,
 ): Promise<QueueItem | null> {
   const language = detectSpeechLanguage(chunk);
   if (language !== 'en') {
@@ -418,15 +475,24 @@ async function fetchItem(
     // deliberate exception to "one voice per reply". Without one, the
     // normal path below is unchanged.
     const utts = languageUtterances(chunk, language);
-    if (utts) return { kind: 'local', utts };
+    if (utts) {
+      trace?.set({ status: 'local', engine: 'local' });
+      return { kind: 'local', utts };
+    }
   }
-  if (ttsMode === 'local') return localItem(chunk, lang);
+  if (ttsMode === 'local') {
+    trace?.set({ status: 'local', engine: 'local' });
+    return localItem(chunk, lang);
+  }
 
   const seq = ++chunkSeq;
+  const voiceTurn = getActiveVoiceTrace()?.id;
   for (let attempt = 0; attempt < 2; attempt++) {
     const ac = new AbortController();
     inflight.add(ac);
     const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
+    trace?.set({ attempts: attempt + 1 });
+    trace?.mark('fetchStart');
     let res: Response | null = null;
     let failure: unknown = null;
     try {
@@ -438,18 +504,22 @@ async function fetchItem(
           // Correlation ids for the server's structured logs; no content.
           'X-TTS-Generation': String(mySession),
           'X-TTS-Chunk': String(seq),
+          ...(voiceTurn ? { 'X-Voice-Turn': voiceTurn } : {}),
         },
         body: JSON.stringify({ text: chunk, lang }),
         signal: ac.signal,
       });
+      trace?.mark('headers');
       if (res.ok) {
-        const item = await toItem(res);
+        const item = await toItem(res, trace);
         if (!item) throw new Error('tts empty');
         if (mySession !== speechSession) {
+          trace?.set({ status: 'aborted' });
           discard(item);
           return null;
         }
         ttsMode = 'remote'; // lock in the neural voice for the rest of the session
+        trace?.set({ status: 'ok', engine: 'remote' });
         return item;
       }
     } catch (error) {
@@ -459,7 +529,10 @@ async function fetchItem(
       clearTimeout(timer);
       inflight.delete(ac);
     }
-    if (mySession !== speechSession) return null; // stopped/superseded: never retry
+    if (mySession !== speechSession) {
+      trace?.set({ status: 'aborted' });
+      return null; // stopped/superseded: never retry
+    }
     const wait = attempt === 0 ? retryDelayMs(res, failure) : null;
     if (wait === null) break;
     await new Promise((r) => setTimeout(r, wait));
@@ -469,9 +542,11 @@ async function fetchItem(
   if (ttsMode === 'remote') {
     // The neural voice already spoke earlier in this session; a one-off
     // failure must not switch voices mid-reply. Skip this chunk instead.
+    trace?.set({ status: 'skipped' });
     return null;
   }
   // Nothing has spoken yet — commit to the browser voice for the session.
   ttsMode = 'local';
+  trace?.set({ status: 'local', engine: 'local' });
   return localItem(chunk, lang);
 }

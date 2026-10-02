@@ -103,11 +103,13 @@ export const conversationApi = {
     message: string,
     signal?: AbortSignal,
     voiceMode?: boolean,
+    turnId?: string,
   ) => {
     return fetch(`/api/conversations/${conversationId}/messages/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...(turnId ? { 'X-Voice-Turn': turnId } : {}),
       },
       credentials: 'include',
       body: JSON.stringify(voiceMode ? { message, voiceMode: true } : { message }),

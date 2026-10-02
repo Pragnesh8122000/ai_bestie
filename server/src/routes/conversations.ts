@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { Conversation } from '../models/Conversation';
 import { Persona } from '../models/Persona';
 import { catchAsync, AppError } from '../utils/errors';
+import { voiceTurnId } from '../utils/metricsLog';
 import { requireAuth, chatRateLimiter } from '../middleware/auth';
 import {
   handleChatStream,
@@ -214,6 +215,7 @@ router.post(
       input.message,
       res,
       input.voiceMode ?? false,
+      voiceTurnId(req.get('X-Voice-Turn')),
     );
   }),
 );

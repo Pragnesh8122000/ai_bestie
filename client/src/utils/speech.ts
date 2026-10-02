@@ -16,6 +16,8 @@
  * the orb reflects actual audio playback.
  */
 
+import type { VoiceTrace } from './voiceTrace';
+
 export {
   beginSpeech,
   setTtsLevelListener,
@@ -43,6 +45,8 @@ interface SpeechRecognitionLike {
   onresult: ((e: SpeechRecognitionEventLike) => void) | null;
   onerror: ((e: { error: string }) => void) | null;
   onend: (() => void) | null;
+  onaudiostart?: (() => void) | null;
+  onspeechstart?: (() => void) | null;
 }
 
 type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
@@ -170,6 +174,7 @@ export function listenOnce(
   onInterim?: (text: string) => void,
   maxMs = 30000,
   onSpeechEnd?: (at: number) => void,
+  trace?: Pick<VoiceTrace, 'mark' | 'count'>,
 ): ListenSession {
   const Ctor = getRecognitionCtor();
   if (!Ctor) {
@@ -307,6 +312,7 @@ export function listenOnce(
 
     recognition.onresult = (e) => {
       lastResultAt = performance.now();
+      trace?.mark('stt.first_result', lastResultAt);
       lastResultWasFinal = e.results.length > 0 && !!e.results[e.results.length - 1].isFinal;
       let interim = '';
       for (let i = 0; i < e.results.length; i++) {
@@ -344,8 +350,15 @@ export function listenOnce(
       failWith(e.error || 'speech-recognition-error');
     };
     recognition.onend = onAttemptEnd;
+    if (trace) {
+      // When the engine's own mic goes live and when it first detects speech.
+      recognition.onaudiostart = () => trace.mark('stt.audio_start');
+      recognition.onspeechstart = () => trace.mark('stt.speech_start');
+    }
 
+    trace?.count('stt_attempts');
     recognition.start();
+    trace?.mark('stt.start');
   };
 
   const promise = new Promise<string>((resolve, reject) => {
