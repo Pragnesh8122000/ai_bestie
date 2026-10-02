@@ -75,7 +75,7 @@ export function stripForSpeech(md: string): string {
   // for the same sentence without it. Say just the site name.
   out = out.replace(BARE_URL, (url) => spokenHost(url));
 
-  // Emoji are spoken as their Unicode names by the Kokoro/espeak front end
+  // Emoji are spoken as their Unicode names by TTS front ends
   // ("I'm here 😊" measured 2.4s vs 0.8s without it). Drop them, along with
   // the joiners, variation selectors and skin-tone modifiers that build them.
   out = out.replace(EMOJI, '');

@@ -10,7 +10,7 @@ AI Bestie is a full-stack web application where users switch among provisioned A
 - **5-Trait Personality Sliders** — Fine-tune directness, warmth, proactivity, depth, and accountability within archetype bounds
 - **Real-Time Streaming Chat** — Token-by-token SSE streaming with Gemini Flash (free tier, primary) falling back to OpenRouter (free models), avatar state animations (idle → thinking → speaking)
 - **Password + Google Sign-In** — Google Identity Services ID tokens are verified server-side, then reuse the same HTTP-only JWT session as password accounts
-- **Voice Conversation** — Immersive orb-first chat with browser speech recognition and an optional authenticated OpenAI transcription fallback for Brave/unsupported browsers. Voice replies use neural TTS (Kokoro, free + open-source, in-process) and fall back to browser speech synthesis when needed.
+- **Voice Conversation** — Immersive orb-first chat with browser speech recognition and an optional authenticated OpenAI transcription fallback for Brave/unsupported browsers. Voice replies use Fish Audio's hosted neural TTS and fall back to browser speech synthesis when needed.
 - **Session Memory** — Last 20 messages kept in the conversation for context
 - **5-Layer System Prompts** — Identity → Voice → Rules → Context → Calibration, with Chain-of-Persona self-check
 - **8 Avatar Options** — Placeholder SVG avatars (Friend/Mentor)
@@ -30,7 +30,7 @@ AI Bestie is a full-stack web application where users switch among provisioned A
 | **Validation**  | Zod 3                                        | API input validation                                           |
 | **LLM (Chat)**  | Gemini Flash (free) → OpenRouter (free)      | Streaming conversation, primary + fallback                     |
 | **Voice (STT)** | Web Speech API → optional OpenAI transcription | Mic → text input; bounded Brave fallback                     |
-| **Voice (TTS)** | sherpa-onnx (Kokoro) → Web Speech fallback   | Text → spoken replies (neural, in-process, free)               |
+| **Voice (TTS)** | Fish Audio API → Web Speech fallback         | Text → spoken replies (hosted neural voice)                    |
 | **Security**    | Helmet, CORS, Rate Limiting                  | Production hardening                                           |
 
 ## 📁 Project Structure
@@ -305,40 +305,28 @@ conversation document and passed to the LLM as context. The earlier 3-layer
 memory system (episodic summaries + semantic vector search) was removed because
 its extraction worker was never wired up, so retrieval always returned empty.
 
-## 🔊 Voice Replies (neural TTS)
+## 🔊 Voice Replies (Fish Audio)
 
-Voice replies use **Kokoro** via `sherpa-onnx-node` — a high-quality neural TTS
-that runs **in-process** (no sidecar, no paid API, Apache-2.0). Toggle the
-explicit **Voice replies · On/Off** switch in the chat sidebar or header; spoken
-replies stream sentence-by-sentence.
+Voice replies are synthesized by the hosted **Fish Audio** API. Toggle the
+explicit **Voice replies · On/Off** switch in the chat sidebar or header;
+spoken replies stream sentence-by-sentence, and in voice chat the persona
+greets you first.
 
-The default model is **Kokoro v1.0 multi-lang** (53 speakers). It replaced the
-older English-only `kokoro-en-v0_19`, whose flat, sentence-by-sentence
-intonation was the main reason replies sounded robotic.
-
-The ~360 MB model is **not committed** to the repo. Download it once (gitignored):
-
-```bash
-npm run download-tts-model -w server   # → server/.tts-models/kokoro-multi-lang-v1_0/
-
-# To A/B against the old model:
-TTS_MODEL_VERSION=v0_19 npm run download-tts-model -w server
-```
-
-Then start the server as usual — the boot log will print `TTS: Kokoro loaded`.
-If the model is absent or `TTS_ENABLED=false`, the `/api/tts` endpoint returns
-503 and the client **automatically falls back** to the browser's built-in
-`speechSynthesis` voice, so voice replies keep working (just lower quality).
+Set `FISH_API_KEY` (from https://fish.audio) and, optionally, pick a voice by
+copying the id from its `fish.audio/m/<id>` URL into `FISH_VOICE_ID`. The boot
+log prints `TTS: Fish Audio (<model>) — voice replies ready`. With no key or
+`TTS_ENABLED=false`, the `/api/tts` endpoint returns 503 and the client
+**automatically falls back** to the browser's built-in `speechSynthesis` voice,
+so voice replies keep working (just lower quality). See
+[docs/deployment.md](docs/deployment.md#tts-setup-fish-audio) for every option.
 
 ### One voice, always
 
 Sam speaks with exactly **one female voice** per session — the two engines are
 never mixed mid-reply:
 
-- **Server:** `TTS_SID` is validated against the _English female_ Kokoro
-  speaker ids for the model version in use (v1.0: 0-10, 20-23; v0_19: 0-4, 7,
-  8). A male, non-English, or invalid id falls back to the default (v1.0: `3` =
-  af_heart) instead of silently changing the character's voice or language.
+- **Server:** every chunk is synthesized with the one configured
+  `FISH_VOICE_ID`.
 - **Client:** the engine (neural vs browser) is chosen by the first chunk that
   actually produces audio and then **locked** for the session. A transient
   `/api/tts` failure mid-reply skips that sentence rather than speaking it in a
@@ -354,15 +342,6 @@ TTS_TOKEN=<auth-jwt> npm run verify-voice -w server
 
 Unit coverage for the same guarantee lives in `client/src/utils/speech.test.ts`.
 
-The native addon needs its shared libraries on the linker path; the `dev` and
-`start` scripts handle this automatically via `server/scripts/with-tts-env.cjs`.
-On a custom start command (e.g. Render), set `LD_LIBRARY_PATH` — see
-[docs/deployment.md](docs/deployment.md#tts-setup).
-
-> **Render free-tier note:** the FP32 Kokoro model can use ~450–650 MB resident
-> RAM, which may exceed a 512 MB free instance. If it OOMs, switch
-> `TTS_MODEL_PATH` to the int8-quantized Kokoro model (smaller) — no code change.
-> Local development is unaffected (your dev machine has plenty of RAM).
 
 ## 🎭 Persona System
 
@@ -385,7 +364,6 @@ See [docs/persona-system.md](docs/persona-system.md) for the full 5-layer prompt
 | `npm run test`                         | Run tests in both workspaces                                             |
 | `npm run seed`                         | Seed database with test data                                             |
 | `npm run migrate:auth -w server`       | Idempotently backfill auth providers and create the Google subject index |
-| `npm run download-tts-model -w server` | Download the Kokoro TTS model (~360 MB, one-time, gitignored)            |
 
 ## 📋 Environment Variables
 
@@ -408,11 +386,13 @@ See [docs/persona-system.md](docs/persona-system.md) for the full 5-layer prompt
 | `OPENAI_TRANSCRIPTION_MODEL`    | No       | Transcription model (default: `whisper-1`)                                                                                                                                            |
 | `TRANSCRIPTION_MAX_DURATION_MS` | No       | Maximum declared voice clip duration (default: 30000)                                                                                                                                 |
 | `TRANSCRIPTION_MAX_BYTES`       | No       | Maximum raw audio upload bytes (default: 2097152)                                                                                                                                     |
-| `TTS_ENABLED`                   | No       | Enable neural TTS (default: `true`). If the model isn't downloaded, voice replies fall back to the browser voice.                                                                     |
-| `TTS_MODEL_VERSION`             | No       | Kokoro release: `v1_0` (default, 53 speakers) or `v0_19` (legacy, English-only). Also selects the default model path and the valid `TTS_SID` range.                                   |
-| `TTS_MODEL_PATH`                | No       | Path to the Kokoro model dir (default: `server/.tts-models/kokoro-multi-lang-v1_0`). Override only for a custom/int8 model.                                                           |
-| `TTS_SID`                       | No       | Kokoro speaker id (v1.0 default: `3` = af_heart). English female ids: 0=af_alloy, 1=af_aoede, 2=af_bella, 3=af_heart, 5=af_kore, 6=af_nicole, 7=af_nova, 9=af_sarah, 20-23 = British. |
-| `TTS_SPEED`                     | No       | Speaking rate (default: `0.95`, clamped to 0.7-1.3). Below 1.0 sounds more relaxed and less clipped.                                                                                  |
+| `TTS_ENABLED`                   | No       | Enable server voice replies (default: `true`). Without `FISH_API_KEY`, voice replies fall back to the browser voice.                                                                  |
+| `FISH_API_KEY`                  | No       | Fish Audio API key for voice replies (TTS).                                                                                                                                           |
+| `FISH_TTS_MODEL`                | No       | Fish Audio model (default: `s2.1-pro-free`).                                                                                                                                          |
+| `FISH_VOICE_ID`                 | No       | Fish Audio voice id from a voice's `fish.audio/m/<id>` URL (`FISH_REFERENCE_ID` is the older name).                                                                                  |
+| `FISH_TTS_SPEED`                | No       | Speaking rate 0.5-2.0 (default: Fish's 1).                                                                                                                                            |
+| `FISH_TTS_LATENCY`              | No       | `low`, `balanced` or `normal` (default: Fish's `normal`).                                                                                                                             |
+| `FISH_TTS_FORMAT`               | No       | `mp3` (default), `wav` or `opus`.                                                                                                                                                     |
 | `TTS_MAX_CHARS`                 | No       | Max characters per TTS request (default: 1000)                                                                                                                                        |
 | `CLIENT_URL`                    | No       | Frontend URL for CORS (default: http://localhost:5173)                                                                                                                                |
 

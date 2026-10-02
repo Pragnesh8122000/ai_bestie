@@ -28,7 +28,6 @@ describe('/api/tts', () => {
     vi.mocked(synthesize).mockResolvedValue({
       audio: wav,
       contentType: 'audio/wav',
-      audioMs: 500,
       queueWaitMs: 0,
       inferMs: 300,
     });
@@ -93,7 +92,6 @@ describe('/api/tts', () => {
     vi.mocked(synthesize).mockResolvedValue({
       audio: mp3,
       contentType: 'audio/mpeg',
-      audioMs: null,
       queueWaitMs: 0,
       inferMs: 400,
     });

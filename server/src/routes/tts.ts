@@ -10,22 +10,18 @@ import { voiceTurnId } from '../utils/metricsLog';
 
 const router = Router();
 
-// GET /api/tts/health — model/queue state for operators and uptime checks.
+// GET /api/tts/health — config/queue state for operators and uptime checks.
 // Public and content-free: no text, no user data, only counters and timings.
 router.get('/health', (_req, res) => {
   const s = ttsStatus();
   res.status(s.available ? 200 : 503).json({
     provider: s.provider,
     available: s.available,
-    warm: s.warm,
     error: s.available ? s.upstreamError : s.error,
-    modelVersion: s.modelVersion,
-    numThreads: s.numThreads,
-    loadMs: s.loadMs,
+    model: s.model,
     queue: s.queue,
     counters: s.counters,
     lastInferMs: s.lastInferMs,
-    lastRtf: s.lastRtf,
   });
 });
 
@@ -55,8 +51,8 @@ router.post(
     const input = schema.parse(req.body);
 
     // Cancel if the client disconnects (new message, Stop, tab closed): a
-    // request still waiting in the queue is dropped before it reaches the
-    // model. Native inference already running can't be interrupted.
+    // request still waiting in the queue is dropped before it is sent, and
+    // one already in flight to Fish Audio is aborted.
     const ac = new AbortController();
     let clientClosed = false;
     res.on('close', () => {
@@ -100,7 +96,7 @@ router.post(
         return;
       }
       if (err instanceof AppError && err.statusCode === 503) {
-        // Model unavailable — client falls back to browser speechSynthesis.
+        // TTS disabled or not configured — client falls back to browser speechSynthesis.
         res.status(503).json({ success: false, code: 'TTS_UNAVAILABLE', message: err.message });
         return;
       }

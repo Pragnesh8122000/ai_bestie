@@ -49,29 +49,18 @@ const start = async () => {
       console.log(`Health check: http://localhost:${config.port}/api/health`);
     });
 
-    // Load the neural TTS model in the background so boot isn't blocked even if
-    // the model is large (or absent). When it resolves, log the outcome; voice
-    // replies fall back to browser speechSynthesis until/unless it's loaded.
+    // Report TTS readiness once; voice replies fall back to browser
+    // speechSynthesis whenever Fish Audio isn't usable.
     if (config.tts.enabled) {
-      initTts()
-        .then(() => {
-          const s = ttsStatus();
-          if (s.available && s.provider === 'fishaudio') {
-            console.log(`TTS: Fish Audio (${s.modelVersion}) — hosted voice replies ready`);
-          } else if (s.available) {
-            console.log(`TTS: Kokoro loaded (${s.sampleRate} Hz) — neural voice replies ready`);
-          } else {
-            console.warn(
-              `TTS: unavailable — ${s.error}. Voice replies will use browser speechSynthesis.`,
-            );
-            if (s.provider === 'kokoro') {
-              console.warn('   Download the model: npm run download-tts-model -w server');
-            }
-          }
-        })
-        .catch(() => {
-          /* initTts swallows errors internally; nothing to do here */
-        });
+      await initTts();
+      const s = ttsStatus();
+      if (s.available) {
+        console.log(`TTS: Fish Audio (${s.model}) — voice replies ready`);
+      } else {
+        console.warn(
+          `TTS: unavailable — ${s.error}. Voice replies will use browser speechSynthesis.`,
+        );
+      }
     } else {
       console.log('TTS: disabled (TTS_ENABLED=false) — using browser speechSynthesis');
     }

@@ -23,9 +23,6 @@ const modelList = (value: string | undefined, defaults: string): string[] =>
     .map((model) => model.trim())
     .filter(Boolean);
 
-const ttsProvider = (value: string | undefined): 'kokoro' | 'fishaudio' =>
-  value?.trim().toLowerCase() === 'fishaudio' ? 'fishaudio' : 'kokoro';
-
 // Containers the browser can decode. (Fish's raw 'pcm' has no header, so the
 // client couldn't play it; it is deliberately not offered.)
 export const FISH_FORMATS = ['mp3', 'wav', 'opus'] as const;
@@ -145,21 +142,11 @@ export const config = {
   client: {
     url: process.env.CLIENT_URL || 'http://localhost:5173',
   },
-  // Neural text-to-speech (Kokoro via sherpa-onnx) running in-process. Free,
-  // open-source, no paid API. The ~360 MB model is NOT committed — download it
-  // once with `npm run download-tts-model -w server`. If the model is absent
-  // or TTS is disabled, the /api/tts endpoint returns 503 and the client falls
-  // back to the browser speechSynthesis voice, so voice replies keep working.
-  //
-  // Default is Kokoro v1.0 multi-lang (53 speakers). It replaced the older
-  // kokoro-en-v0_19 (11 speakers), whose flat intonation was the main reason
-  // replies sounded robotic. Set TTS_MODEL_VERSION=v0_19 (plus TTS_MODEL_PATH)
-  // to A/B against the old model without a code change.
+  // Voice replies (TTS) via the hosted Fish Audio API. If TTS is disabled or
+  // FISH_API_KEY is missing, /api/tts returns 503 and the client falls back to
+  // the browser speechSynthesis voice, so voice replies keep working.
   tts: {
     enabled: process.env.TTS_ENABLED !== 'false',
-    // Which engine serves /api/tts: 'kokoro' (default, in-process, free) or
-    // 'fishaudio' (hosted API, needs FISH_API_KEY; Kokoro is never loaded).
-    provider: ttsProvider(process.env.TTS_PROVIDER),
     fish: {
       // A pasted "Bearer <key>" (as in Fish's curl examples) still works.
       apiKey: (process.env.FISH_API_KEY ?? '').trim().replace(/^Bearer\s+/i, ''),
@@ -179,49 +166,16 @@ export const config = {
         '',
       ),
     },
-    // 'v1_0' (default, 53 speakers) or 'v0_19' (legacy, 11 speakers). The
-    // speaker-id space differs between them, so ttsService validates the sid
-    // against the version actually in use.
-    modelVersion: process.env.TTS_MODEL_VERSION?.trim() === 'v0_19' ? 'v0_19' : 'v1_0',
-    modelDir:
-      process.env.TTS_MODEL_PATH ||
-      path.resolve(
-        rootDir,
-        process.env.TTS_MODEL_VERSION?.trim() === 'v0_19'
-          ? 'server/.tts-models/kokoro-en-v0_19'
-          : 'server/.tts-models/kokoro-multi-lang-v1_0',
-      ),
-    // Kokoro speaker id. For v1.0: 3=af_heart, 2=af_bella, 1=af_aoede, ...
-    // A blank value means "unset" — `Number('')` is 0, which would silently
-    // pick a different voice than the intended default. ttsService validates
-    // this further and only allows female speaker ids.
-    sid: process.env.TTS_SID?.trim() ? Number(process.env.TTS_SID) : undefined,
-    // Slightly under 1.0 reads as more relaxed/human than the default clip.
-    speed: Number(process.env.TTS_SPEED ?? 0.95),
     maxChars: Number(process.env.TTS_MAX_CHARS ?? 1000),
-    // ONNX Runtime threads per inference. 'auto' (default) = the container's
-    // CPU grant capped at 2 (1 on Linux when the grant can't be read, since
-    // ORT would otherwise size itself from the *host's* cores). Measured on
-    // an M5: 1 thread 0.62x real time, 2 threads 0.39x.
-    numThreads: process.env.TTS_NUM_THREADS?.trim() || 'auto',
-    // Inferences that may run at once. One model instance on a CPU host:
-    // parallel requests only split the same cores, so keep 1 unless the host
-    // has cores to spare (then raise it rather than numThreads). A hosted
-    // provider isn't CPU-bound here, so it defaults to 4.
-    concurrency: Math.max(
-      1,
-      Number(process.env.TTS_CONCURRENCY) ||
-        (ttsProvider(process.env.TTS_PROVIDER) === 'fishaudio' ? 4 : 1),
-    ),
+    // Fish Audio requests in flight at once (a voice reply prefetches two
+    // chunks per listener).
+    concurrency: Math.max(1, Number(process.env.TTS_CONCURRENCY) || 4),
     // Requests allowed to wait for a slot before new ones get 503 + Retry-After.
     maxQueue: Math.max(1, Number(process.env.TTS_MAX_QUEUE) || 8),
     queueTimeoutMs: Math.max(1000, Number(process.env.TTS_QUEUE_TIMEOUT_MS) || 10_000),
-    // Answer 503 if one chunk's inference exceeds this (the slot stays held
-    // until the native call returns). The client gives up at 35s overall.
+    // Answer 503 (and abort the upstream call) if one chunk takes longer than
+    // this. The client gives up at 35s overall.
     inferenceTimeoutMs: Math.max(1000, Number(process.env.TTS_INFERENCE_TIMEOUT_MS) || 20_000),
-    // Run one short inference right after loading so the first real reply
-    // doesn't pay the model's first-run cost.
-    warmup: process.env.TTS_WARMUP !== 'false',
   },
 } as const;
 

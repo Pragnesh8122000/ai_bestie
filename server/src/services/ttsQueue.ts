@@ -1,5 +1,5 @@
 /**
- * Bounded FIFO for Kokoro inference.
+ * Bounded FIFO for TTS requests.
  *
  * The previous promise-chain mutex serialized synthesis but had no limit: every
  * request queued forever, including ones whose client had already hung up (the
@@ -7,16 +7,16 @@
  * few concurrent users that meant unbounded waiting sockets and CPU spent on
  * audio nobody would hear. This queue:
  *
- *  - runs at most `concurrency` jobs at once (one model instance, CPU-bound);
+ *  - runs at most `concurrency` jobs at once;
  *  - rejects immediately with `TtsBusyError` once `maxQueue` jobs are waiting
  *    (backpressure — the client retries once, then skips the chunk);
  *  - drops a waiting job the moment its AbortSignal fires (client
- *    disconnected / reply superseded), so it never reaches the model;
+ *    disconnected / reply superseded), so it is never sent upstream;
  *  - gives up on a job that has waited longer than `queueTimeoutMs`.
  *
  * A job that has started holds its slot until the underlying promise settles,
- * even if the caller stopped waiting (native inference can't be interrupted),
- * so the concurrency bound is always honest.
+ * even if the caller stopped waiting, so the concurrency bound is always
+ * honest.
  */
 
 export class TtsBusyError extends Error {

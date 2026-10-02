@@ -1,6 +1,7 @@
 /**
  * The browser speechSynthesis voice: the fallback when the neural voice is
- * unavailable, and the voice for Hindi/Gujarati chunks Kokoro can't speak.
+ * unavailable, and the voice for Hindi/Gujarati chunks the English server
+ * voice can't speak.
  * Used by `tts.ts`; kept apart so the queue logic stays readable.
  */
 import { splitChunks } from './speechChunker';
