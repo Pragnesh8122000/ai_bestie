@@ -69,7 +69,7 @@ app.get('/api/health', (_req, res) => {
 // TTS endpoint is mounted before the global /api rate limiter: a voice reply
 // is several sentences in quick succession and would blow the 10/10s global
 // ceiling. Only ttsRateLimiter (mounted inside the router) applies.
-app.use('/api/tts', ttsRoutes);
+app.use('/api/tts', ttsRoutes);  
 app.use('/api/transcriptions', transcriptionRoutes);
 app.use('/api/metrics', metricsRoutes);
 
