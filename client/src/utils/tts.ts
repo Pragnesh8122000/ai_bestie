@@ -1,7 +1,7 @@
 /**
- * Voice replies (TTS). Prefers the server-side neural voice (Kokoro via
- * /api/tts) and falls back to the browser speechSynthesis voice if the server
- * is unavailable or the model isn't loaded. Re-exported by `speech.ts`, which
+ * Voice replies (TTS). Prefers the server voice (Fish Audio via /api/tts)
+ * and falls back to the browser speechSynthesis voice if the server voice is
+ * unavailable. Re-exported by `speech.ts`, which
  * is what callers import.
  *
  *   setTtsStateListener(speaking => ...)  // one boolean: audio started/ended
@@ -44,12 +44,11 @@ type QueueItem = (
   | { kind: 'local'; utts: SpeechSynthesisUtterance[] }
 ) & { trace?: ChunkTrace };
 
-// Chunks synthesized ahead of the one playing. Two, not one: the server works
-// through requests one at a time, so a second queued request keeps it busy
-// while a short chunk plays, banking time for a longer chunk later. Measured
-// on the long benchmark reply (server/src/scripts/bench-tts.mts) this removed
-// ~2.9s of mid-reply silence; deeper than this only synthesizes audio that a
-// stop is likely to throw away.
+// Chunks synthesized ahead of the one playing. Two, not one: a second request
+// in flight banks time for a longer chunk later while a short one plays.
+// Measured on a long benchmark reply (with the former in-process voice) this
+// removed ~2.9s of mid-reply silence; deeper than this only synthesizes audio
+// that a stop is likely to throw away.
 const PREFETCH_DEPTH = 2;
 // A /api/tts request that hasn't answered by then is abandoned (skipped, or
 // the browser voice if nothing has spoken yet) instead of freezing speech.
@@ -61,7 +60,7 @@ const SCHEDULE_LEAD_S = 0.25;
 // <audio> playback is abandoned this long after its expected end if `ended`
 // never fires, so one stuck element can't freeze the rest of the reply.
 const PLAYBACK_GRACE_MS = 5_000;
-const DEFAULT_SAMPLE_RATE = 24_000; // Kokoro
+const DEFAULT_SAMPLE_RATE = 24_000; // WAV header fallback only
 
 let stateListener: TtsStateListener | null = null;
 let levelListener: TtsLevelListener | null = null;
@@ -394,7 +393,7 @@ function remoteItem(blob: Blob, durationMs: number): Extract<QueueItem, { kind: 
   return { kind: 'remote', audio, url, durationMs };
 }
 
-/** Duration of a 16-bit mono PCM WAV from its header, or a Kokoro-rate estimate. */
+/** Duration of a 16-bit mono PCM WAV from its header, or a 24 kHz estimate. */
 function wavDurationMs(data: ArrayBuffer | null, size: number): number {
   let rate = DEFAULT_SAMPLE_RATE;
   if (data && data.byteLength >= 44) rate = new DataView(data).getUint32(24, true) || rate;
@@ -404,7 +403,7 @@ function wavDurationMs(data: ArrayBuffer | null, size: number): number {
 // Compressed audio (Fish Audio's mp3/opus) has no cheap length header; ~128 kbps.
 const COMPRESSED_BYTES_PER_MS = 16;
 
-/** The server picks the format per TTS provider: WAV (Kokoro) or mp3/opus. */
+/** The server sends Fish Audio's configured format (mp3 by default, or wav/opus). */
 function audioType(res: Response): string {
   return res.headers?.get?.('Content-Type')?.split(';')[0].trim() || 'audio/wav';
 }
@@ -482,8 +481,8 @@ async function fetchItemUntraced(
 ): Promise<QueueItem | null> {
   const language = detectSpeechLanguage(chunk);
   if (language !== 'en') {
-    // Kokoro's English voice can only mangle Hindi/Gujarati script (and
-    // Gujarati isn't a Kokoro language at all), so such a chunk goes to a
+    // The server voice is an English voice that would mangle Hindi/Gujarati
+    // script, so such a chunk goes to a
     // browser voice for that language when the device has one — the one
     // deliberate exception to "one voice per reply". Without one, the
     // normal path below is unchanged.

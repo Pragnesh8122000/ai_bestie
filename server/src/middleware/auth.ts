@@ -63,7 +63,8 @@ export const createApiRateLimiter = () =>
     // it here means list/history/persona requests can never consume a message
     // allowance or make the first generation request fail prematurely.
     skip: (req: Request) =>
-      req.method === 'POST' && /^\/conversations\/[^/]+\/messages\/stream\/?$/.test(req.path),
+      req.method === 'POST' &&
+      /^\/conversations\/[^/]+\/(?:messages|greeting)\/stream\/?$/.test(req.path),
     message: {
       success: false,
       message: 'Too many requests. Please slow down.',

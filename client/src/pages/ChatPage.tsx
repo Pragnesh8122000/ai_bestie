@@ -20,6 +20,8 @@ export default function ChatPage() {
   const activeConversationId = useChatStore((s) => s.activeConversationId);
   const isLoadingConversation = useChatStore((s) => s.isLoadingConversation);
   const activeTitle = useChatStore((s) => s.activeConversation?.title);
+  const activeMessageCount = useChatStore((s) => s.activeConversation?.messages?.length);
+  const greet = useChatStore((s) => s.greet);
   const isSidebarOpen = useChatStore((s) => s.isSidebarOpen);
   const setSidebarOpen = useChatStore((s) => s.setSidebarOpen);
   const error = useChatStore((s) => s.error);
@@ -37,6 +39,13 @@ export default function ChatPage() {
     defaultBootstrapAttempted.current = true;
     openDefaultConversation();
   }, [openDefaultConversation, activeConversationId, isLoadingConversation]);
+
+  // A new chat opens with the persona talking first. Voice mode handles its
+  // own (spoken) greeting, so only text chat greets here.
+  useEffect(() => {
+    if (isVoiceMode || activeMessageCount !== 0) return;
+    void greet();
+  }, [activeConversationId, activeMessageCount, greet, isVoiceMode]);
 
   // Close the mobile drawer when the viewport crosses into desktop, otherwise
   // the body scroll lock below would survive with no visible way to release it.

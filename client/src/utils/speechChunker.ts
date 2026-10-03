@@ -20,9 +20,8 @@ export interface SpeechChunkerOptions {
 
 /**
  * Chosen by sweeping these options over six representative replies: real
- * Kokoro audio durations on a streaming timeline, at inference speeds of
- * 0.4x and 0.62x real time, then confirmed with `npm run bench-tts -w server`
- * (0.65x): versus the old one-then-two-sentences rule, average time to first
+ * audio durations from the former in-process Kokoro voice on a streaming
+ * timeline, at inference speeds of 0.4x-0.65x real time: versus the old one-then-two-sentences rule, average time to first
  * audio 2.6s -> 1.7s (never later on any reply) and silence between chunks
  * 2.4s -> 0.4s per reply. Holding the first chunk for 5 words cut gaps a
  * little more but started short replies ~1s later; a 15-word minimum (a

@@ -28,17 +28,19 @@
 └──────┬──────────┬───────────────────────────────────┘
        │          │
        │          │
-┌──────▼───┐ ┌───▼────────────────────┐
-│ MongoDB  │ │ Google Gemini API      │
-│ (local or│ │ (free tier, primary)   │
-│  Atlas M0)│ │ + OpenRouter (free,    │
-│          │ │   fallback)            │
-└──────────┘ └────────────────────────┘
+┌──────▼───┐ ┌───▼────────────────────┐ ┌──────────────────┐
+│ MongoDB  │ │ Google Gemini API      │ │ Fish Audio API   │
+│ (local or│ │ (free tier, primary)   │ │ (voice replies,  │
+│  Atlas M0)│ │ + OpenRouter (free,    │ │  TTS)            │
+│          │ │   fallback)            │ │                  │
+└──────────┘ └────────────────────────┘ └──────────────────┘
 ```
 
 The baseline is a free-tier deployment: no Redis, no background workers, no
-paid chat-generation API, and no vector search. The backend is a single Express
-process. Optional server transcription is the only metered external path.
+paid chat-generation API, and no vector search. The backend is a single,
+small Express process (no in-process models), so it fits a 512 MB Render
+instance. Fish Audio (voice replies) and the optional server transcription are
+the metered external paths.
 
 ## Prerequisites
 
@@ -52,6 +54,7 @@ process. Optional server transcription is the only metered external path.
 | Google Cloud Console     | Google Identity Services Web client | Free                                      |
 | Google AI Studio         | Gemini Flash API (primary chat)     | Free tier; quotas vary by project/model   |
 | OpenRouter               | Free chat models (fallback)         | Free models with per-model RPM/daily caps |
+| Fish Audio               | Voice replies (TTS)                 | `s2.1-pro-free` model; usage may be billed |
 
 **Optional paid service:** OpenAI Whisper is used only when immersive voice
 cannot use browser recognition (notably Brave). Leave `OPENAI_API_KEY` unset to
@@ -94,26 +97,19 @@ OPENAI_TRANSCRIPTION_MODEL=whisper-1
 TRANSCRIPTION_MAX_DURATION_MS=30000
 TRANSCRIPTION_MAX_BYTES=2097152
 
-# TTS (neural voice replies; optional — falls back to browser voice if absent)
+# TTS — Fish Audio voice replies (falls back to the browser voice without a key)
 TTS_ENABLED=true
-TTS_PROVIDER=kokoro   # or fishaudio (hosted; see "TTS Setup")
-# FISH_API_KEY=       # fishaudio only
-# FISH_TTS_MODEL=s2.1-pro-free
-# FISH_VOICE_ID=711cf3ed00ab441a8f54a45058047b7a  # id from fish.audio/m/<id>
+FISH_API_KEY=...
+FISH_TTS_MODEL=s2.1-pro-free
+FISH_VOICE_ID=711cf3ed00ab441a8f54a45058047b7a  # id from fish.audio/m/<id>
 # FISH_TTS_SPEED=1    # 0.5-2.0
 # FISH_TTS_LATENCY=   # low | balanced | normal
 # FISH_TTS_FORMAT=mp3 # mp3 | wav | opus
-# TTS_MODEL_PATH defaults to server/.tts-models/kokoro-multi-lang-v1_0
-TTS_MODEL_VERSION=v1_0
-TTS_SID=3      # af_heart
-TTS_SPEED=0.95
-# Inference tuning (defaults shown). auto = container CPU grant, capped at 2.
-# TTS_NUM_THREADS=auto
-# TTS_CONCURRENCY=1
+# Request tuning (defaults shown)
+# TTS_CONCURRENCY=4
 # TTS_MAX_QUEUE=8
 # TTS_QUEUE_TIMEOUT_MS=10000
 # TTS_INFERENCE_TIMEOUT_MS=20000
-# TTS_WARMUP=true
 
 # Voice-performance metrics (JSONL; timings/sizes/outcomes only, no content).
 # Always on stdout; set a directory to also write voice-metrics-YYYY-MM-DD.jsonl.
@@ -180,9 +176,10 @@ services:
     name: ai-bestie-api
     runtime: node
     plan: free
-    # Download the TTS model at build time (it's gitignored) and build the server.
-    buildCommand: npm install && npm run download-tts-model -w server && npm run build:server
-    startCommand: npm start
+    # --include=dev: NODE_ENV=production would otherwise skip TypeScript.
+    buildCommand: npm ci --include=dev && npm run build:server
+    startCommand: npm start -w server
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
@@ -198,6 +195,12 @@ services:
         sync: false
       - key: TTS_ENABLED
         value: 'true'
+      - key: FISH_API_KEY
+        sync: false
+      - key: FISH_TTS_MODEL
+        value: s2.1-pro-free
+      - key: FISH_VOICE_ID
+        sync: false
       - key: CLIENT_URL
         value: https://ai-bestie.vercel.app
       - key: GOOGLE_CLIENT_ID
@@ -208,15 +211,9 @@ services:
 
 ### Start Command
 
-The production server runs the compiled TypeScript. `npm start` is
-`node scripts/with-tts-env.cjs node dist/server.js` — the wrapper sets
-`LD_LIBRARY_PATH` (or `DYLD_LIBRARY_PATH` on macOS) so the `sherpa-onnx-node`
-native addon can find its prebuilt shared libraries. If you set a custom start
-command, prefix it with the lib path, e.g.:
-
-```bash
-LD_LIBRARY_PATH=$(npm root)/sherpa-onnx-linux-x64:$LD_LIBRARY_PATH node dist/server.js
-```
+The production server runs the compiled TypeScript: `npm start -w server`
+(`node dist/server.js`). Nothing native or model-sized is installed, so the
+free 512 MB instance is enough.
 
 ### Build Step
 
@@ -228,80 +225,38 @@ cd server && npx tsc
 cd client && npm run build
 ```
 
-## TTS Setup
+## TTS Setup (Fish Audio)
 
-Voice replies use **Kokoro** via the `sherpa-onnx-node` native addon, running
-**in-process** (no sidecar — keeps the app on a single Render free web service).
+Voice replies are synthesized by the hosted Fish Audio API
+(`server/src/services/fishAudioTts.ts`), one request per speech chunk.
 
-**Switching provider**: `TTS_PROVIDER=fishaudio` sends each chunk to the hosted
-Fish Audio API instead (`server/src/services/fishAudioTts.ts`). Set
-`FISH_API_KEY`; `FISH_TTS_MODEL` (`s2.1-pro-free`), `FISH_VOICE_ID` (the
-voice — the id in a voice's `fish.audio/m/<id>` URL; `FISH_REFERENCE_ID` is
-the older name), `FISH_TTS_SPEED` (0.5–2.0), `FISH_TTS_LATENCY`
-(`low`/`balanced`/`normal`) and `FISH_TTS_FORMAT` (`mp3`, `wav` or `opus`) are
-optional. Kokoro is
-then never loaded (no model download, no ~600 MB RSS), `TTS_CONCURRENCY`
-defaults to 4, and the queue, `TTS_INFERENCE_TIMEOUT_MS` (which also aborts the
-upstream request), health endpoint and `tts.synth` log lines all still apply.
-An upstream 429 answers 503 + `Retry-After: 1`; any other upstream failure, or
-a missing key, answers 503 and the client falls back as below. A rejected key,
-missing credit or unknown voice/model (HTTP 400/401/402/403/404) is printed
-once to the server console and shown as `error` on `/api/tts/health`. Fish Audio
-usage may be billed per character, and reply text leaves the server.
-The steps below are Kokoro-only.
-
-1. **Download the model** (one-time, ~360 MB, gitignored). Defaults to Kokoro
-   v1.0 multi-lang (53 speakers), which sounds markedly less robotic than the
-   old v0_19. The render.yaml build command above runs this automatically; for
-   a manual deploy:
-   ```bash
-   npm run download-tts-model -w server   # → server/.tts-models/kokoro-multi-lang-v1_0/
-   ```
-2. **Native libraries**: the addon's shared libraries must be on the linker
-   path _before_ Node starts. `npm start` handles this via
-   `server/scripts/with-tts-env.cjs`. If you set a custom start command, prefix
-   `LD_LIBRARY_PATH` as shown in the Start Command section.
-3. **Env vars**: `TTS_ENABLED=true` (default). `TTS_MODEL_VERSION` picks the
-   Kokoro release (`v1_0` default, `v0_19` legacy) and with it the default
-   model path and valid speaker-id range. `TTS_MODEL_PATH` only needs setting
-   for a custom/int8 model. `TTS_SID` selects the speaker, `TTS_SPEED` the
-   rate.
-4. **Inference tuning**: `TTS_NUM_THREADS` (`auto` = the container's CPU
-   grant from cgroups, capped at 2; 1 on Linux when the grant can't be read).
-   Measured on an Apple M5: 1 thread ≈ 0.62× real time, 2 threads ≈ 0.39×.
-   Give the service ≥2 dedicated vCPUs to benefit; on a fractional CPU leave
-   it at `auto`. `TTS_CONCURRENCY` (1) inferences run at once;
+1. **Key**: create an API key at https://fish.audio and set `FISH_API_KEY` on
+   Render. A pasted `Bearer <key>` also works.
+2. **Voice**: open any voice on fish.audio (Discover, or your own clone) and
+   copy the 32-character id from its URL (`fish.audio/m/<id>`) into
+   `FISH_VOICE_ID` (`FISH_REFERENCE_ID` is the older name).
+   `FISH_TTS_MODEL` (`s2.1-pro-free`), `FISH_TTS_SPEED` (0.5–2.0),
+   `FISH_TTS_LATENCY` (`low`/`balanced`/`normal`) and `FISH_TTS_FORMAT`
+   (`mp3`, `wav` or `opus`) are optional. Restart after changing any of them.
+3. **Load limits**: `TTS_CONCURRENCY` (4) requests run at once;
    `TTS_MAX_QUEUE` (8) may wait — beyond that `/api/tts` answers 503 with
    `Retry-After: 1`. Waiting longer than `TTS_QUEUE_TIMEOUT_MS` (10s) or
-   inferring longer than `TTS_INFERENCE_TIMEOUT_MS` (20s) also answers 503,
-   and the client skips that chunk (or uses the browser voice if nothing has
-   played yet). `TTS_WARMUP=false` skips the one-inference warm-up at boot.
-5. **Health & logs**: `GET /api/tts/health` (no auth, no content) reports
-   load/warm state, threads, queue depth, counters and the last real-time
-   factor. Each synthesis logs one JSON line (`evt: "tts.synth"`) with ids,
-   text length, queue wait, inference and audio duration — never the text.
-6. **Fallback**: if the model is missing or fails to load, `/api/tts` returns
-   503 and the client automatically uses the browser `speechSynthesis` voice —
-   voice replies keep working, just lower quality.
+   taking longer than `TTS_INFERENCE_TIMEOUT_MS` (20s, which also aborts the
+   upstream call) answers 503, and the client skips that chunk (or uses the
+   browser voice if nothing has played yet). An upstream 429 is treated like a
+   full queue (503 + `Retry-After: 1`).
+4. **Health & logs**: `GET /api/tts/health` (no auth, no content) reports
+   availability, model, queue depth and counters. A rejected key, missing
+   credit or unknown voice/model (Fish HTTP 400/401/402/403/404) is printed
+   once to the server console and shown as `error` there. Each synthesis logs
+   one JSON line (`evt: "tts.synth"`) with ids, text length, queue wait,
+   request time and bytes — never the text.
+5. **Fallback**: with no key, `TTS_ENABLED=false`, or any Fish failure,
+   `/api/tts` returns 503 and the client uses the browser `speechSynthesis`
+   voice — voice replies keep working, just lower quality.
 
-### 512 MB RAM caveat (free tier)
-
-The FP32 Kokoro model (`kokoro-multi-lang-v1_0`, ~360 MB on disk) measured
-~600 MB of additional resident RAM once loaded (`npm run bench-tts -w server`
-prints it), which exceeds a Render free instance's 512 MB limit and gets
-OOM-killed. If that happens:
-
-- Switch to the **int8-quantized** Kokoro model (~half the RSS):
-  ```bash
-  # download kokoro-int8-multi-lang-v1_1.tar.bz2 instead, extract to
-  # server/.tts-models/kokoro-int8-multi-lang-v1_1/, and set:
-  TTS_MODEL_PATH=server/.tts-models/kokoro-int8-multi-lang-v1_1
-  ```
-  (It's multilingual; pick an English speaker id — 0–10 are English voices.)
-- Or set `TTS_ENABLED=false` to skip neural TTS entirely (voice replies fall
-  back to the browser voice).
-
-Local development is unaffected — your dev machine has ample RAM.
+**Privacy & cost**: reply text is sent to Fish Audio for synthesis, and usage
+may be billed per character on paid models.
 
 ## Frontend Deployment (Vercel)
 
@@ -309,7 +264,7 @@ Local development is unaffected — your dev machine has ample RAM.
 
 ```json
 {
-  "buildCommand": "cd client && npm run build",
+  "buildCommand": "npm run build -w client",
   "outputDirectory": "client/dist",
   "rewrites": [
     { "source": "/api/:path*", "destination": "https://ai-bestie-api.onrender.com/api/:path*" },

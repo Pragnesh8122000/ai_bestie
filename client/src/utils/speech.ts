@@ -1,8 +1,8 @@
 /**
  * Voice helpers. STT uses the browser SpeechRecognition API; TTS (implemented
- * in `tts.ts`, re-exported here) prefers a server-side neural voice (Kokoro
- * via /api/tts) and falls back to the browser speechSynthesis voice if the
- * server is unavailable or the model isn't loaded.
+ * in `tts.ts`, re-exported here) prefers the server voice (Fish Audio via
+ * /api/tts) and falls back to the browser speechSynthesis voice if the
+ * server voice is unavailable.
  *
  * The public API is deliberately small and stable — `chatStore.ts` drives it:
  *   setTtsStateListener(speaking => ...)  // one boolean: audio started/ended

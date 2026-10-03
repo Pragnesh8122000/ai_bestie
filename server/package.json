@@ -3,17 +3,15 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "node scripts/with-tts-env.cjs tsx watch src/server.ts",
+    "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node scripts/with-tts-env.cjs node dist/server.js",
+    "start": "node dist/server.js",
     "lint": "eslint src/",
     "test": "vitest run",
     "seed": "tsx src/seed.ts",
     "migrate:auth": "tsx src/scripts/migrate-auth-providers.ts",
-    "download-tts-model": "tsx src/scripts/download-tts-model.ts",
     "verify-voice": "tsx src/scripts/verify-voice.mts",
-    "voice-report": "tsx src/scripts/voice-report.mts",
-    "bench-tts": "node scripts/with-tts-env.cjs tsx src/scripts/bench-tts.mts"
+    "voice-report": "tsx src/scripts/voice-report.mts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -28,7 +26,6 @@
     "mongoose": "^8.15.1",
     "passport": "^0.7.0",
     "passport-local": "^1.0.0",
-    "sherpa-onnx-node": "^1.11.7",
     "zod": "^3.25.42"
   },
   "devDependencies": {

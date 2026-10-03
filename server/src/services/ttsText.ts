@@ -1,8 +1,9 @@
 /**
- * Last-line text normalization before Kokoro. The client already turns the
+ * Last-line text normalization before synthesis. The client already turns the
  * reply's Markdown into speakable text (client/src/utils/speechText.ts); this
  * repeats only the two fixes whose absence is audible and that any caller of
- * /api/tts could trip over. Both were measured against the real model:
+ * /api/tts could trip over. Both were measured against a neural TTS model
+ * (the former in-process Kokoro voice):
  *
  *   "I'm here 😊"                          2.4s of audio (emoji name read out)
  *   "I'm here"                             0.8s

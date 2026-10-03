@@ -2,10 +2,9 @@ import { config, type FishFormat } from '../config';
 import { AppError } from '../utils/errors';
 
 /**
- * Hosted TTS via Fish Audio (https://api.fish.audio/v1/tts). Selected with
- * TTS_PROVIDER=fishaudio; nothing is loaded in-process, so the Kokoro model's
- * RAM is not paid. One request per chunk, returning the encoded audio as-is
- * (mp3 by default) — the client decodes it with decodeAudioData like the WAV.
+ * The server's voice: hosted TTS via Fish Audio (https://api.fish.audio/v1/tts).
+ * One request per chunk, returning the encoded audio as-is (mp3 by default) —
+ * the client decodes it with decodeAudioData.
  *
  * Never log the text or the API key; ttsService logs timings only.
  */

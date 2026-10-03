@@ -7,6 +7,9 @@ import { assembleSystemPrompt, ensureDefaultPersona } from './personaService';
 import { LlmProviderError, streamChat, type ProviderInfo } from './llmService';
 import { logMetric } from '../utils/metricsLog';
 import { formatIst } from '../utils/time';
+import { deriveTitle } from '../utils/conversationTitle';
+
+export { deriveTitle };
 
 const STREAM_TIMEOUT_MS = 30_000; // abort upstream if no completion by 30s
 const HEARTBEAT_MS = 15_000; // SSE keepalive to survive idle proxy/CDN drops
@@ -38,32 +41,6 @@ export interface ConversationSummary {
   createdAt: Date;
 }
 
-const TITLE_MAX_LENGTH = 50;
-const DEFAULT_TITLE = 'New Conversation';
-
-/**
- * Derive a conversation title from its first user message.
- *
- * Collapses whitespace, strips a wrapping quote pair, and clips to 50 chars on
- * a word boundary where one is available so titles don't end mid-word.
- */
-export function deriveTitle(firstUserMessage: string): string {
-  let text = (firstUserMessage || '').replace(/\s+/g, ' ').trim();
-
-  // Strip one wrapping quote pair ("hi there" -> hi there).
-  const quoted = /^(["'\u201c\u2018])(.*)(["'\u201d\u2019])$/.exec(text);
-  if (quoted) text = quoted[2].trim();
-
-  if (!text) return DEFAULT_TITLE;
-  if (text.length <= TITLE_MAX_LENGTH) return text;
-
-  const clipped = text.slice(0, TITLE_MAX_LENGTH);
-  const lastSpace = clipped.lastIndexOf(' ');
-  // Only back off to a word boundary if it doesn't gut the title.
-  const base = lastSpace > TITLE_MAX_LENGTH / 2 ? clipped.slice(0, lastSpace) : clipped;
-  return `${base.trimEnd()}\u2026`;
-}
-
 /**
  * Orchestrate a chat response: retrieve context → assemble prompt → stream tokens → persist.
  *
@@ -80,10 +57,26 @@ export function deriveTitle(firstUserMessage: string): string {
 // side of this).
 const VOICE_MODE_MAX_TOKENS = 220;
 
+/**
+ * Sent to the LLM (never stored or shown) when the persona opens a brand-new
+ * conversation itself. Providers need at least one user turn, and the
+ * persona's system prompt still sets the voice.
+ */
+export const GREETING_CUE =
+  "[The user just opened a new conversation with you and hasn't said anything yet. " +
+  'Start it yourself, in character: greet them warmly and ask how they are doing or ' +
+  "what's on their mind. One or two short sentences. Never mention this note.]";
+
+/**
+ * `userMessage: null` is the greeting: the persona speaks first in an empty
+ * conversation. Nothing from the user is stored, and the reply is only
+ * persisted while the conversation is still empty (idempotent across tabs
+ * and double-fired effects).
+ */
 export async function handleChatStream(
   userId: string,
   conversationId: string,
-  userMessage: string,
+  userMessage: string | null,
   res: Response,
   voiceMode = false,
   turnId?: string,
@@ -110,43 +103,59 @@ export async function handleChatStream(
     return;
   }
 
+  const isGreeting = userMessage === null;
+  if (isGreeting && (conversation.messageCount ?? 0) > 0) {
+    res.status(409).json({
+      success: false,
+      code: 'CONVERSATION_STARTED',
+      message: 'Conversation already started',
+    });
+    return;
+  }
+
   const systemPrompt = assembleSystemPrompt(persona, voiceMode);
 
-  // 3. Auto-title from the first user message. Guarded on `messageCount: 0`
-  // so it can only ever match before the push below, and on `titleIsCustom`
-  // so a manual rename is never overwritten. A no-match is the normal
-  // outcome for every message after the first.
-  await Conversation.updateOne(
-    { _id: conversation._id, userId, titleIsCustom: false, messageCount: 0 },
-    { $set: { title: deriveTitle(userMessage) } },
-  );
+  let recentMessages: Array<{ role: 'user' | 'assistant'; content: string }>;
+  if (isGreeting) {
+    recentMessages = [{ role: 'user', content: GREETING_CUE }];
+  } else {
+    // 3. Auto-title from the first user message. Guarded on "no user message
+    // yet" (a persona greeting may already be there) so it can only match
+    // before the push below, and on `titleIsCustom` so a manual rename is
+    // never overwritten. A no-match is the normal outcome after the first.
+    await Conversation.updateOne(
+      { _id: conversation._id, userId, titleIsCustom: false, 'messages.role': { $ne: 'user' } },
+      { $set: { title: deriveTitle(userMessage) } },
+    );
 
-  // 4. Append the user message atomically and return the updated document.
-  // Reusing the write result removes a separate database round trip from the
-  // transcript-to-first-token path while preserving concurrent-stream safety.
-  const userNow = new Date();
-  const refreshed = await Conversation.findOneAndUpdate(
-    { _id: conversation._id, userId },
-    {
-      $push: {
-        messages: { role: 'user', content: userMessage, timestamp: userNow, tokenCount: 0 },
+    // 4. Append the user message atomically and return the updated document.
+    // Reusing the write result removes a separate database round trip from
+    // the transcript-to-first-token path while preserving concurrent-stream
+    // safety.
+    const userNow = new Date();
+    const refreshed = await Conversation.findOneAndUpdate(
+      { _id: conversation._id, userId },
+      {
+        $push: {
+          messages: { role: 'user', content: userMessage, timestamp: userNow, tokenCount: 0 },
+        },
+        $inc: { messageCount: 1 },
+        $set: {
+          lastMessageAt: userNow,
+          lastMessagePreview: toPreview(userMessage),
+        },
       },
-      $inc: { messageCount: 1 },
-      $set: {
-        lastMessageAt: userNow,
-        lastMessagePreview: toPreview(userMessage),
-      },
-    },
-    { new: true },
-  );
+      { new: true },
+    );
 
-  // 5. Build the context window from that updated document.
-  const recentMessages = (refreshed?.getRecentMessages(20) || [])
-    .filter((m) => m.role === 'user' || m.role === 'assistant')
-    .map((m) => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content,
-    }));
+    // 5. Build the context window from that updated document.
+    recentMessages = (refreshed?.getRecentMessages(20) || [])
+      .filter((m) => m.role === 'user' || m.role === 'assistant')
+      .map((m) => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+      }));
+  }
 
   // 6. Set up SSE headers
   res.setHeader('Content-Type', 'text/event-stream');
@@ -195,7 +204,9 @@ export async function handleChatStream(
       systemPrompt,
       messages: recentMessages,
       ...(voiceMode ? { maxTokens: VOICE_MODE_MAX_TOKENS } : {}),
-      ...(voiceMode ? { latencyMode: true } : {}),
+      // Greetings are short and should feel instant, so they always take the
+      // fast, hedged model path too.
+      ...(voiceMode || isGreeting ? { latencyMode: true } : {}),
       signal: ac.signal,
       onProvider: (info) => {
         provider = info;
@@ -218,11 +229,12 @@ export async function handleChatStream(
 
     clearTimeout(timeout);
 
-    // Persist assistant message atomically
+    // Persist assistant message atomically. A greeting only lands in a
+    // still-empty conversation (the user may have spoken in another tab).
     if (fullResponse) {
       const endNow = new Date();
       await Conversation.updateOne(
-        { _id: conversation._id, userId },
+        { _id: conversation._id, userId, ...(isGreeting ? { messageCount: 0 } : {}) },
         {
           $push: {
             messages: {
@@ -287,6 +299,7 @@ export async function handleChatStream(
       userId,
       conversationId,
       voiceMode,
+      ...(isGreeting ? { kind: 'greeting' } : {}),
       startedAt: formatIst(startedAtMs),
       outcome,
       ...(errorCode ? { errorCode } : {}),
@@ -307,7 +320,7 @@ export async function handleChatStream(
       ...(provider?.attempts !== undefined ? { llmAttempts: provider.attempts } : {}),
       ...(failureSummary ? { failureSummary } : {}),
       maxTokens: voiceMode ? VOICE_MODE_MAX_TOKENS : null,
-      inputChars: userMessage.length,
+      inputChars: userMessage?.length ?? 0,
       contextMessages: recentMessages.length,
       replyChars,
       tokenChunks,

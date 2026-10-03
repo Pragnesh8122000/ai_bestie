@@ -60,7 +60,7 @@ class FakeAudio {
     this.src = url;
   }
   play() {
-    spoken.push({ engine: 'remote', voice: 'kokoro' });
+    spoken.push({ engine: 'remote', voice: 'server' });
     setTimeout(() => this.onended?.(), 0);
     return Promise.resolve();
   }
@@ -332,7 +332,7 @@ describe('playback serialisation', () => {
  * The companion used to pause 3-5s at every full stop. The pump was fully
  * serial (fetch, play, fetch, play), so each sentence boundary stalled for the
  * whole synthesis time of the next chunk — measured at 2.2-3.2s against the
- * real Kokoro endpoint.
+ * former in-process Kokoro endpoint.
  *
  * Synthesis now overlaps playback. These tests pin that behaviour without
  * weakening the ordering and cancellation guarantees above.
@@ -357,7 +357,7 @@ describe('inter-sentence gap', () => {
       play() {
         const n = ++playN;
         events.push({ at: Date.now() - t0, kind: 'play-start', n });
-        spoken.push({ engine: 'remote', voice: 'kokoro' });
+        spoken.push({ engine: 'remote', voice: 'server' });
         setTimeout(() => {
           events.push({ at: Date.now() - t0, kind: 'play-end', n });
           this.onended?.();

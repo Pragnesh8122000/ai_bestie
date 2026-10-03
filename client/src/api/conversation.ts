@@ -116,4 +116,15 @@ export const conversationApi = {
       signal,
     });
   },
+
+  /** SSE: the persona opens an empty conversation itself (409 once it has messages). */
+  streamGreeting: (conversationId: string, signal?: AbortSignal, voiceMode?: boolean) => {
+    return fetch(`/api/conversations/${conversationId}/greeting/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(voiceMode ? { voiceMode: true } : {}),
+      signal,
+    });
+  },
 };

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 /**
  * Reliability of the voice-reply queue: gapless Web Audio scheduling,
  * cancellation (Stop / new message / superseded reply), timeouts, retries,
- * watchdogs, and routing of scripts Kokoro can't speak. The Web Audio clock is
+ * watchdogs, and routing of scripts the English server voice can't speak. The Web Audio clock is
  * faked on top of real timers so scheduling can be asserted exactly.
  */
 
@@ -469,7 +469,7 @@ describe('timeouts, retries and watchdogs', () => {
   });
 });
 
-describe('languages Kokoro cannot speak', () => {
+describe('languages the server voice cannot speak', () => {
   it('speaks a Hindi-script chunk with a Hindi device voice instead of the English neural voice', async () => {
     voices = [
       { name: 'Samantha', lang: 'en-US', localService: true },

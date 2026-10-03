@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { StrictMode } from 'react';
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { render, screen, waitFor, cleanup, act, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -32,6 +33,7 @@ vi.mock('../api/conversation', () => ({
     rename: vi.fn(),
     delete: vi.fn(),
     streamMessage: vi.fn(),
+    streamGreeting: vi.fn(),
   },
 }));
 
@@ -46,7 +48,7 @@ import { usePersonaStore } from '../stores/personaStore';
 import { conversationApi } from '../api/conversation';
 import { personaApi } from '../api/persona';
 import { startVoiceTurn } from '../utils/voiceCapture';
-import { stopSpeaking } from '../utils/speech';
+import { speakChunk, stopSpeaking } from '../utils/speech';
 import { TranscriptionRequestError } from '../api/transcription';
 
 const api = conversationApi as unknown as Record<string, ReturnType<typeof vi.fn>>;
@@ -94,6 +96,7 @@ beforeEach(() => {
     archetypes: [],
   });
   api.list.mockResolvedValue({ data: { data: { conversations: [conversation], hasMore: false } } });
+  api.streamGreeting.mockResolvedValue({ ok: false, status: 409, json: async () => ({}) });
   personaApiMock.getArchetypes.mockResolvedValue({
     data: {
       data: {
@@ -449,7 +452,13 @@ describe('ChatPage drawer', () => {
 
     expect(stopSpeaking).toHaveBeenCalled();
     await waitFor(() =>
-      expect(api.streamMessage).toHaveBeenCalledWith('a', 'stop', expect.anything(), true, undefined),
+      expect(api.streamMessage).toHaveBeenCalledWith(
+        'a',
+        'stop',
+        expect.anything(),
+        true,
+        undefined,
+      ),
     );
   });
 
@@ -784,6 +793,92 @@ describe('ChatPage error toast', () => {
       });
 
       expect(useChatStore.getState().error).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('ChatPage persona speaks first', () => {
+  function openConversation(id: string, messages: unknown[]) {
+    const conversation = {
+      ...useChatStore.getState().activeConversation!,
+      id,
+      messages,
+    };
+    useChatStore.setState({
+      conversations: [conversation as any],
+      activeConversation: conversation as any,
+      activeConversationId: id,
+    });
+  }
+
+  it('opens a new text chat with a greeting instead of waiting for the user', async () => {
+    openConversation('fresh-text', []);
+    render(<ChatPage />, { wrapper: MemoryRouter });
+
+    await waitFor(() =>
+      expect(api.streamGreeting).toHaveBeenCalledWith(
+        'fresh-text',
+        expect.any(AbortSignal),
+        undefined,
+      ),
+    );
+  });
+
+  it('does not greet a chat the user has already spoken in', async () => {
+    openConversation('old-chat', [
+      { _id: 'u', role: 'user', content: 'hi', timestamp: '2026-10-02T10:00:00.000Z' },
+    ]);
+    render(<ChatPage />, { wrapper: MemoryRouter });
+    await screen.findByRole('heading', { name: 'Lisbon trip' });
+    expect(api.streamGreeting).not.toHaveBeenCalled();
+  });
+
+  it('says the greeting aloud in voice mode before it starts listening', async () => {
+    vi.useFakeTimers();
+    try {
+      openConversation('greeted-voice', [
+        {
+          _id: 'g',
+          role: 'assistant',
+          content: 'Hey you! How are you doing today?',
+          timestamp: '2026-10-02T10:00:00.000Z',
+        },
+      ]);
+      // StrictMode, as in main.tsx: its dev remount stops speech once.
+      render(
+        <StrictMode>
+          <ChatPage />
+        </StrictMode>,
+        { wrapper: MemoryRouter },
+      );
+
+      fireEvent.click(screen.getAllByRole('button', { name: 'Start voice chat' })[1]);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+
+      // The greeting is queued again after the last stop, so it is heard.
+      const lastStop = Math.max(0, ...vi.mocked(stopSpeaking).mock.invocationCallOrder);
+      const speakOrder = vi.mocked(speakChunk).mock.invocationCallOrder;
+      const spokenAfterStop = vi
+        .mocked(speakChunk)
+        .mock.calls.filter((_, i) => speakOrder[i] > lastStop)
+        .map(([text]) => text)
+        .join(' ');
+      expect(spokenAfterStop).toContain('How are you doing today?');
+      // Its own voice must not be captured as the user's first turn.
+      expect(startVoiceTurn).not.toHaveBeenCalled();
+
+      // If the audio never starts, turn-taking still resumes.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(8_000);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      expect(startVoiceTurn).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }

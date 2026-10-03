@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   deriveTitle,
   ensureDefaultConversation,
+  GREETING_CUE,
   handleChatStream,
   openPersonaConversation,
 } from './chatService';
@@ -327,6 +328,66 @@ describe('handleChatStream metrics', () => {
     expect(entry.totalMs).toBeGreaterThanOrEqual(entry.ttfbMs);
     expect(lines[0]).not.toContain('my secret message');
     expect(lines[0]).not.toContain('Hi friend');
+  });
+
+  it('greets first in an empty conversation without storing anything from the user', async () => {
+    vi.mocked(Conversation.findOne).mockResolvedValue({
+      _id: 'c1',
+      personaId: 'p1',
+      messageCount: 0,
+    } as any);
+    let sent: any;
+    vi.mocked(streamChat).mockImplementation(async (opts: any) => {
+      sent = opts;
+      opts.onToken('Hey you! How are you doing?');
+      opts.onEnd('Hey you! How are you doing?');
+      return 'Hey you! How are you doing?';
+    });
+    const res = fakeRes();
+
+    await handleChatStream('u1', 'c1', null, res, false);
+
+    expect(sent.messages).toEqual([{ role: 'user', content: GREETING_CUE }]);
+    // Fast, hedged models even in text chat: the user is waiting on it.
+    expect(sent.latencyMode).toBe(true);
+    expect(Conversation.findOneAndUpdate).not.toHaveBeenCalled();
+    // Only the assistant greeting is written, and only while still empty.
+    expect(Conversation.updateOne).toHaveBeenCalledTimes(1);
+    const [filter, update] = vi.mocked(Conversation.updateOne).mock.calls[0] as any[];
+    expect(filter).toMatchObject({ _id: 'c1', userId: 'u1', messageCount: 0 });
+    expect(update.$push.messages).toMatchObject({
+      role: 'assistant',
+      content: 'Hey you! How are you doing?',
+    });
+    expect(JSON.parse(lines[0])).toMatchObject({ kind: 'greeting', inputChars: 0 });
+  });
+
+  it('refuses to greet a conversation that already has messages', async () => {
+    vi.mocked(Conversation.findOne).mockResolvedValue({
+      _id: 'c1',
+      personaId: 'p1',
+      messageCount: 2,
+    } as any);
+    const res = fakeRes();
+
+    await handleChatStream('u1', 'c1', null, res, false);
+
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(streamChat).not.toHaveBeenCalled();
+    expect(Conversation.updateOne).not.toHaveBeenCalled();
+  });
+
+  it('titles from the first user message even after a persona greeting', async () => {
+    vi.mocked(streamChat).mockImplementation(async (opts: any) => {
+      opts.onEnd('ok');
+      return 'ok';
+    });
+
+    await handleChatStream('u1', 'c1', 'planning a trip to Lisbon', fakeRes(), false);
+
+    const [filter, update] = vi.mocked(Conversation.updateOne).mock.calls[0] as any[];
+    expect(filter).toMatchObject({ titleIsCustom: false, 'messages.role': { $ne: 'user' } });
+    expect(update).toEqual({ $set: { title: 'planning a trip to Lisbon' } });
   });
 
   it('logs an error outcome with a null ttfb when the LLM fails before any token', async () => {

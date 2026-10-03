@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useChatStore } from '../stores/chatStore';
 import { usePersonaStore } from '../stores/personaStore';
-import { setTtsLevelListener, stopSpeaking } from '../utils/speech';
+import { beginSpeech, setTtsLevelListener, speakChunk, stopSpeaking } from '../utils/speech';
+import { SpeechChunker } from '../utils/speechChunker';
 import { startVoiceTurn, type VoiceTurnSession, type VoiceTurnTiming } from '../utils/voiceCapture';
 import { createBargeInDetector } from '../utils/bargeIn';
 import { TranscriptionRequestError } from '../api/transcription';
@@ -28,6 +29,7 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
   const chatError = useChatStore((state) => state.error);
   const sendMessage = useChatStore((state) => state.sendMessage);
   const setTtsEnabled = useChatStore((state) => state.setTtsEnabled);
+  const greet = useChatStore((state) => state.greet);
   const personas = usePersonaStore((state) => state.personas);
   const [muted, setMuted] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
@@ -37,6 +39,9 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
   const [ttsLevel, setTtsLevel] = useState(0);
   const [cycle, setCycle] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
+  // A replayed greeting is queued but not audible yet: don't start listening.
+  const [greetingPending, setGreetingPending] = useState(false);
+  const greetedRef = useRef<{ id: string; replayed: boolean } | null>(null);
   const sessionRef = useRef<VoiceTurnSession | null>(null);
   const endProbeRef = useRef<(() => void) | null>(null);
   const mountedRef = useRef(true);
@@ -98,6 +103,51 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [exit, toggleMute]);
 
+  // The persona speaks first in a new chat. An empty conversation gets a
+  // fresh spoken greeting; one whose only messages are the persona's (a
+  // greeting written while in text chat) has it replayed aloud. Waits for an
+  // in-flight reply so a greeting is never spoken twice or cut in half.
+  useEffect(() => {
+    if (!activeConversation || isStreaming || greetedRef.current?.id === activeConversation.id)
+      return;
+    greetedRef.current = { id: activeConversation.id, replayed: false };
+    const { messages } = activeConversation;
+    if (messages.some((message) => message.role === 'user')) return;
+    if (messages.length === 0) {
+      void greet({ voiceMode: true });
+      return;
+    }
+    const opener = [...messages].reverse().find((message) => message.role === 'assistant');
+    if (!opener) return;
+    greetedRef.current.replayed = true;
+    const chunker = new SpeechChunker();
+    setGreetingPending(true);
+    beginSpeech();
+    for (const chunk of [...chunker.push(opener.content), ...chunker.flush()]) speakChunk(chunk);
+  }, [activeConversation, greet, isStreaming]);
+
+  // Unmounting stops speech (setTtsEnabled(false)), and so does StrictMode's
+  // dev-only unmount/remount right after the first mount: a replay cut off
+  // that way must run again on the next mount. A streamed greeting keeps
+  // going in the store, so it is not restarted.
+  useEffect(
+    () => () => {
+      if (greetedRef.current?.replayed) greetedRef.current = null;
+    },
+    [],
+  );
+
+  // Audio started (or never will): normal turn-taking takes over.
+  useEffect(() => {
+    if (!greetingPending) return;
+    if (avatarState === 'speaking') {
+      setGreetingPending(false);
+      return;
+    }
+    const timer = setTimeout(() => setGreetingPending(false), 8000);
+    return () => clearTimeout(timer);
+  }, [avatarState, greetingPending]);
+
   // A barge-in probe lives exactly as long as the persona is speaking. Other
   // store updates mid-reply (the stream's `done`, a refreshed conversation)
   // must not tear it down. Declared before the turn effect so a probe that
@@ -118,7 +168,7 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
     // debounce so an interruption is caught as early as possible. The probe
     // stays silent (orb keeps showing "speaking") until real speech is
     // detected; only then do we interrupt.
-    const canStartIdle = avatarState === 'idle' && !isStreaming;
+    const canStartIdle = avatarState === 'idle' && !isStreaming && !greetingPending;
     const isBargeIn = avatarState === 'speaking';
     if (!canStartIdle && !isBargeIn) return;
 
@@ -229,7 +279,16 @@ export default function ImmersiveVoiceMode({ onExit }: Props) {
     );
 
     return () => clearTimeout(timer);
-  }, [activeConversation, avatarState, cycle, isStreaming, muted, sendMessage, turnPending]);
+  }, [
+    activeConversation,
+    avatarState,
+    cycle,
+    greetingPending,
+    isStreaming,
+    muted,
+    sendMessage,
+    turnPending,
+  ]);
 
   return (
     <main className="relative isolate flex h-[100dvh] min-h-[32rem] overflow-hidden bg-ink text-linen">

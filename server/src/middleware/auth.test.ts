@@ -21,6 +21,23 @@ describe('conversation rate-limit policy', () => {
     await request(app).get('/api/conversations/abc').expect(429);
   });
 
+  it('leaves the persona greeting stream to the generation limiter only', async () => {
+    const app = express();
+    app.use((req, _res, next) => {
+      req.userId = 'user-greeting';
+      next();
+    });
+    app.use('/api', createApiRateLimiter());
+    app.get('/api/conversations/:id', (_req, res) => res.sendStatus(200));
+    app.post('/api/conversations/:id/greeting/stream', (_req, res) => res.sendStatus(200));
+
+    for (let i = 0; i < 10; i += 1) {
+      await request(app).get('/api/conversations/abc').expect(200);
+    }
+    await request(app).post('/api/conversations/abc/greeting/stream').expect(200);
+    await request(app).get('/api/conversations/abc').expect(429);
+  });
+
   it('enforces the existing twenty-message generation policy exactly once', async () => {
     const app = express();
     app.use((req, _res, next) => {
@@ -28,10 +45,8 @@ describe('conversation rate-limit policy', () => {
       next();
     });
     app.get('/api/conversations/:id', (_req, res) => res.sendStatus(200));
-    app.post(
-      '/api/conversations/:id/messages/stream',
-      createChatRateLimiter(),
-      (_req, res) => res.sendStatus(200),
+    app.post('/api/conversations/:id/messages/stream', createChatRateLimiter(), (_req, res) =>
+      res.sendStatus(200),
     );
 
     for (let i = 0; i < 10; i += 1) {
@@ -40,9 +55,7 @@ describe('conversation rate-limit policy', () => {
     for (let i = 0; i < 20; i += 1) {
       await request(app).post('/api/conversations/abc/messages/stream').expect(200);
     }
-    const limited = await request(app)
-      .post('/api/conversations/abc/messages/stream')
-      .expect(429);
+    const limited = await request(app).post('/api/conversations/abc/messages/stream').expect(429);
 
     expect(limited.body.message).toBe('Too many messages. Please slow down.');
   });
