@@ -4,6 +4,105 @@
 
 AI Bestie is a full-stack web application where users switch among provisioned AI personas, interact via real-time text or immersive voice chat, and carry context through the conversation via session memory (the last 20 messages).
 
+<p align="center">
+  <img src="docs/screenshots/chat.jpg" alt="AI Bestie chat screen: conversation sidebar, the ember orb for the persona Sam, and a formatted reply" width="900">
+</p>
+
+## 👀 What it is
+
+Most chatbots feel like a search box. AI Bestie is designed to feel like **a late-night phone call with a friend**.
+You pick a companion (a Friend, Mentor, Therapist or Coach), then **talk out loud or type**. The companion answers
+in its own personality, streams the reply word by word, and **speaks it back** in a natural neural voice. A glowing
+"ember orb" stands in for the companion and changes as it listens, thinks and speaks.
+
+- **Who it's for:** anyone who wants a supportive voice to think out loud with: venting after a long day,
+  rehearsing a hard conversation, or getting nudged on habits.
+- **What makes it different:** voice comes first (hands-free call mode with barge-in, so you can interrupt it),
+  each persona has its own personality, and everything runs on free tiers (Gemini Flash, OpenRouter free models,
+  and Kokoro TTS running in-process).
+
+## ⚙️ How it works
+
+```mermaid
+flowchart LR
+    U(["You speak or type"]) --> STT["Speech-to-text<br/>browser Web Speech API<br/>(Whisper fallback for Brave)"]
+    STT --> API["Express API<br/>POST /messages/stream"]
+    API --> P["Persona system prompt<br/>+ last 20 messages"]
+    P --> LLM["Gemini Flash<br/>→ OpenRouter fallback"]
+    LLM -- "SSE tokens" --> UI["Live transcript<br/>+ orb state"]
+    LLM -- "sentence chunks" --> TTS["Kokoro neural TTS<br/>/api/tts"]
+    TTS --> OUT(["Your companion talks back"])
+    API <--> DB[("MongoDB<br/>users · personas · conversations")]
+```
+
+1. **Sign in** with email/password or Google, or browse a read-only **guest preview** without an account.
+2. **Pick a companion.** Each persona combines an archetype with five personality traits. Together they produce a
+   layered system prompt.
+3. **Talk.** Your words go to the server, which streams the LLM reply back over Server-Sent Events. The client shows
+   the tokens as they arrive and splits the reply into speakable chunks.
+4. **Listen.** Each chunk is synthesized by Kokoro and played back to back, so the voice starts after the first
+   sentence instead of waiting for the full reply. In voice mode you can interrupt at any time.
+
+## 📸 Screens
+
+> Captured from the running client with fixture data (no real user data).
+
+### Sign in
+
+<img src="docs/screenshots/login.jpg" alt="Sign-in screen with the ember orb logo, Google sign-in, email and password fields" width="900">
+
+Email/password or Google Identity Services sign-in. Both create the same HTTP-only JWT session. The Google button
+is visibly disabled when no client ID is configured, and password login keeps working. **Continue as guest** opens
+a read-only preview.
+
+### Guest preview
+
+<img src="docs/screenshots/guest-preview.jpg" alt="Guest preview showing a sample conversation with Sam and a Log in to chat button" width="900">
+
+A sample conversation bundled with the client, so a visitor can get a feel for the app before signing up.
+It makes no write calls. Every write route on the server still requires auth.
+
+### Text chat
+
+<img src="docs/screenshots/chat.jpg" alt="Main chat screen with recent conversations, persona header and markdown reply" width="900">
+
+The main workspace:
+- **Sidebar:** multiple conversations with titles, last-message previews and relative timestamps. You can
+  rename, delete or start a new chat.
+- **Header:** the persona orb (shown "on the line"), the persona's name and archetype, and quick actions:
+  voice chat, switch persona, sign out.
+- **Transcript:** assistant replies render as Markdown (lists, emphasis, tables, code). Replies stream in live and
+  use a scroll-safe layout.
+- **Composer:** a text box that grows as you type, plus a mic button for one-off dictation.
+
+### Switch persona
+
+<img src="docs/screenshots/switch-persona.jpg" alt="Switch persona page with four persona cards: Friend, Mentor, Therapist and Coach" width="900">
+
+Jump between your companions. Selecting one reopens its latest conversation, or starts its first chat if you
+haven't talked to it yet.
+
+### Voice call mode
+
+<img src="docs/screenshots/voice-listening.jpg" alt="Immersive voice mode: a large glowing orb with mute, transcript and end-call controls" width="900">
+
+A full-screen, hands-free call. The orb reacts to your microphone level while it listens and to the TTS level
+while it speaks. Turn-taking is automatic: silence detection decides when you've finished, and **barge-in** lets
+you cut the companion off mid-sentence. Likely echo of the companion's own voice is filtered out. Controls: mute, show
+transcript, end call.
+
+<img src="docs/screenshots/voice-transcript.jpg" alt="Voice mode with the transcript panel open, showing a spoken question and the streaming reply" width="900">
+
+Open the transcript at any time to read the call as it happens, including the reply as it streams in. Voice-mode
+replies are kept short and plain-spoken on the server so they sound natural out loud.
+
+### On mobile
+
+<img src="docs/screenshots/mobile.jpg" alt="Three phone screens: conversations drawer, voice call and guest preview" width="900">
+
+The conversation list becomes a slide-over drawer that takes keyboard focus and closes with Escape. Voice mode and the
+guest preview are built for touch.
+
 ## ✨ Key Features
 
 - **4 Companion Archetypes** — Mentor, Friend, Therapist, Coach — each with unique voice, traits, and behavioral rules
@@ -422,6 +521,4 @@ See [docs/persona-system.md](docs/persona-system.md) for the full 5-layer prompt
 
 ## 📄 License
 
-Private — All rights reserved.# ai_bestie
-
-# ai_bestie
+Private — All rights reserved.
