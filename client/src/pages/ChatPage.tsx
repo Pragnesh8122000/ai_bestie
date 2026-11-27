@@ -224,8 +224,9 @@ export default function ChatPage() {
         )}
       </AnimatePresence>
 
-      {/* Main column */}
-      <div className="flex flex-1 flex-col">
+      {/* Main column. min-w-0 lets it shrink below its content, so a long
+          conversation title truncates instead of widening the page on phones. */}
+      <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-center justify-between gap-2 px-4 py-3 sm:px-8 sm:py-4">
           <div className="flex min-w-0 items-center gap-2">
             <button
