@@ -4,6 +4,12 @@
 
 AI Bestie is a full-stack web application where users switch among provisioned AI personas, interact via real-time text or immersive voice chat, and carry context through the conversation via session memory (the last 20 messages).
 
+## Demo video
+
+Watch a typed interview-prep question turn into a spoken follow-up in the same conversation. The 34-second demo uses Chrome speech recognition, Gemini, and Fish Audio. Turn on sound to hear the prerecorded prompt and Sam’s reply.
+
+[![Watch the AI Bestie text and voice demo](docs/demo/ai-bestie-demo.png)](docs/demo/ai-bestie-demo.mp4)
+
 ## ✨ Key Features
 
 - **2 Companion Archetypes** — Friend and Mentor — each with unique voice, traits, and behavioral rules
