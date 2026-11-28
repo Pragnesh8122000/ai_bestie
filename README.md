@@ -8,7 +8,11 @@ AI Bestie is a full-stack web application where users switch among provisioned A
 
 Watch a typed interview-prep question turn into a spoken follow-up in the same conversation. The 34-second demo uses Chrome speech recognition, Gemini, and Fish Audio. Turn on sound to hear the prerecorded prompt and Sam’s reply.
 
-[![Watch the AI Bestie text and voice demo](docs/demo/ai-bestie-demo.png)](docs/demo/ai-bestie-demo.mp4)
+[![Watch the AI Bestie text and voice demo](docs/demo/ai-bestie-demo.png)][demo-video]
+
+[Play the demo video][demo-video]
+
+[demo-video]: https://cdn.jsdelivr.net/gh/Pragnesh8122000/ai_bestie@cf002836f6fabc0c94347e402df4fab947573eec/docs/demo/ai-bestie-demo.mp4
 
 ## ✨ Key Features
 
